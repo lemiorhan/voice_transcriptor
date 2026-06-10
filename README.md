@@ -68,7 +68,28 @@ Projeyi çalıştırmadan önce bu kütüphaneleri yüklemeniz gerekmektedir. Bu
 
 ---
 
-## Kurulum Adımları
+## Hızlı Başlangıç (Tek Komut)
+
+Sanal ortam oluşturma, bağımlılık yükleme ve uygulamayı başlatma — hepsi tek komutta:
+
+```bash
+./run.sh
+```
+
+`run.sh` ilk çalıştırmada `.venv` sanal ortamını oluşturur ve `requirements.txt`
+içindeki paketleri yükler (torch vb. büyük olduğundan ilk kurulum biraz sürebilir),
+sonraki çalıştırmalarda bunları atlayıp doğrudan uygulamayı başlatır. Bağımlılıklar
+yalnızca `requirements.txt` değiştiğinde yeniden yüklenir.
+
+> Eğer `./run.sh: Permission denied` alırsanız, ya bir kez `chmod +x run.sh`
+> çalıştırın ya da `bash run.sh` ile başlatın (ikisi de tek komuttur).
+> Farklı bir Python sürümü kullanmak için: `PYTHON=python3.11 ./run.sh`
+
+Aşağıdaki manuel adımlar, kurulumu elle yapmak isteyenler içindir.
+
+---
+
+## Kurulum Adımları (Manuel)
 
 Bu projeyi sıfırdan çalıştırmak isteyenler için adım adım yapılması gerekenler aşağıdadır:
 
@@ -108,9 +129,11 @@ Her iki komut da arm64 çıktısı vermelidir. Özellikle Apple Silicon (M1/M2) 
    pip install -r requirements.txt
    
 7. **Uygulamayı Çalıştırın:**
-Terminalde aşağıdaki komutu kullanarak uygulamayı başlatın (dosya adını kendi script adınıza göre değiştirebilirsiniz):
+Sanal ortam aktifken aşağıdaki komutla başlatın:
     ```bash
     python meeting-transcriptor.py
+    ```
+    (Veya kurulum/aktivasyonla uğraşmadan tek komut: `./run.sh`)
 
 ## Kullanım
 
