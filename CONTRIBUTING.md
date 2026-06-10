@@ -1,4 +1,4 @@
-# Contributing to Voice Transcriptor
+# Contributing to Audiocript
 
 Thanks for your interest in contributing! This document explains how to set up the
 project, the conventions we follow, and how to propose changes.
@@ -34,7 +34,7 @@ for the optional system-audio capture.
 4. If you change behavior, update the `README.md` and the design notes under
    `docs/superpowers/specs/` where relevant.
 5. Verify your change:
-   - `python -m py_compile meeting-transcriptor.py`
+   - `python -m py_compile audiocript.py`
    - Run the app (`./run.sh`) and exercise the affected paths (record, language,
      mic picker, system-audio toggle, transcription).
    - For audio/Swift changes, test on a real terminal — interactive audio capture

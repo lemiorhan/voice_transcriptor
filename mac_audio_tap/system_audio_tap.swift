@@ -45,7 +45,7 @@ func cleanup() {
 let tapDesc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
 tapDesc.muteBehavior = .unmuted
 tapDesc.isPrivate = true
-tapDesc.name = "VoiceTranscriptorTap"
+tapDesc.name = "AudiocriptTap"
 
 var st = AudioHardwareCreateProcessTap(tapDesc, &tapID)
 if st != noErr || tapID == kAudioObjectUnknown {
@@ -68,9 +68,9 @@ let tapUID = tapUIDCF as String
 // 3) Create a PRIVATE aggregate device that contains the tap.
 //    NOTE: tap auto-start MUST be false — enabling it deadlocks
 //    AudioDeviceCreateIOProcIDWithBlock; we start the device explicitly instead.
-let aggUID = "VoiceTranscriptorAgg-" + UUID().uuidString
+let aggUID = "AudiocriptAgg-" + UUID().uuidString
 let desc: [String: Any] = [
-    kAudioAggregateDeviceNameKey as String: "VoiceTranscriptorAgg",
+    kAudioAggregateDeviceNameKey as String: "AudiocriptAgg",
     kAudioAggregateDeviceUIDKey as String: aggUID,
     kAudioAggregateDeviceIsPrivateKey as String: true,
     kAudioAggregateDeviceIsStackedKey as String: false,

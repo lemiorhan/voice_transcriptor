@@ -1,48 +1,53 @@
-# Voice Transcriptor - Terminal App Edition
+<div align="center">
 
-A full-screen terminal app for **recording audio and transcribing it locally** with
-Whisper — on macOS. Capture your **microphone and the system audio (Zoom, Meet,
-YouTube, …) at the same time**, watch live input/output level meters while you
-record, and get a transcript saved next to the recording. Everything runs on your
-machine; no audio leaves your computer.
+<img src="assets/header.png" alt="Audiocript" width="820">
 
-> The interface is in English. The **transcription language** is selectable
-> (Turkish or English) and each language uses a dedicated, high-quality model.
+**Record & transcribe audio locally with Whisper — on macOS.**
+Capture your microphone *and* your system audio at the same time, watch live level
+meters, and get a saved transcript. Everything runs on your machine.
 
-![Voice Transcriptor — home](assets/tui-home.png)
+[![License: MIT](https://img.shields.io/badge/License-MIT-22C55E.svg)](LICENSE)
+[![Platform: macOS 14.4+](https://img.shields.io/badge/platform-macOS%2014.4%2B-0EA5E9.svg)](#requirements)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg)](#requirements)
+[![Transcription: Whisper](https://img.shields.io/badge/transcription-Whisper-8B5CF6.svg)](#models-per-language)
+[![Runs offline](https://img.shields.io/badge/privacy-runs%20offline-14B8A6.svg)](#how-it-works)
 
-![Voice Transcriptor — recording with live level meters](assets/tui-recording.png)
+</div>
+
+---
+
+<div align="center">
+
+<img src="assets/tui-menu.png" alt="Audiocript main menu" width="48%">
+<img src="assets/tui-recording.png" alt="Recording with live VU meters" width="48%">
+<img src="assets/tui-viewer.png" alt="In-app transcript viewer" width="48%">
+<img src="assets/tui-import.png" alt="Importing a file with progress" width="48%">
+
+</div>
 
 ---
 
 ## Features
 
-- **Full-screen terminal UI** — header (current settings + clock), a main panel,
-  and a footer with single-key shortcuts. No typing commands, no Enter needed.
-- **Record mic + system audio together** — your voice (microphone) and the
-  computer's output (a call, a video) are captured simultaneously and mixed into
-  one mono track for transcription.
-- **Transcribe an existing file** — import an `mp4`, `mov`, `wav`, `mp3` or `m4a`
-  file (native file picker); its audio is extracted into a new project folder and
-  transcribed just like a recording.
-- **System audio without BlackHole** — uses a native macOS **Core Audio process
-  tap**, so playback keeps playing through your speakers/headphones normally. No
-  virtual cable, no Multi-Output Device, no rerouting.
-- **Live level meters (VU)** — speak and the mic bar moves; play audio and the
-  system bar moves. Instantly see whether capture is actually working (`no signal`
-  is shown for a silent source).
-- **Per-language models** for the best quality in each language:
-  - **Turkish** → [`selimc/whisper-large-v3-turbo-turkish`](https://huggingface.co/selimc/whisper-large-v3-turbo-turkish) (Hugging Face Transformers)
-  - **English** → [`ggml-distil-large-v3`](https://huggingface.co/distil-whisper/distil-large-v3-ggml) (whisper.cpp via `pywhispercpp`)
+- **Full-screen terminal app** with **arrow-key navigation** and a grouped,
+  collapsible menu — no commands to memorize.
+- **Record mic + system audio together** — your voice and the computer's output
+  (a call, a video) are captured simultaneously and mixed into one track.
+- **System audio without BlackHole** — a native macOS **Core Audio process tap**
+  keeps your audio playing through your speakers while it's captured. No virtual
+  cable, no Multi-Output Device, no rerouting.
+- **Live level meters (VU)** — see whether each source is actually being captured
+  (`no signal` is shown for a silent one).
+- **Named recordings** — name a recording when you create it, and rename any
+  recording at any time.
+- **Browse & read transcripts in-app** — a scrollable viewer; press `Enter` to
+  open the transcript in your preferred external app.
+- **Import existing media** — transcribe an `mp4`, `mov`, `wav`, `mp3` or `m4a`
+  file with a live progress bar.
+- **Per-language models** for quality (Turkish & English — see [below](#models-per-language)).
 - **Runs on the best device automatically** — CUDA → Apple Silicon (MPS/Metal) → CPU.
-- **Per-recording project folders** — each recording gets its own timestamped
-  folder containing `audio.wav` and `transcription.txt`.
-- **Opens the transcript automatically** — after each run the transcript is opened
-  in an app you pick from your installed apps (defaults to **Sublime Text** if
-  installed; can be turned off).
-- **Remembers your preferences** — language, microphone, system-audio toggle,
-  recordings folder and "open with" app are saved to `config.json`.
-- **One command to run** — `./run.sh` sets up the environment and launches the app.
+- **Background model pre-warming** so your first transcript is fast.
+- **One command to run** — `./run.sh` sets everything up.
 
 ---
 
@@ -50,95 +55,76 @@ machine; no audio leaves your computer.
 
 - **macOS 14.4+** (Core Audio process taps are used for system-audio capture).
 - **Python 3.10+**.
-- **Xcode / Command Line Tools (`swiftc`)** — only needed for the optional
-  system-audio capture (a tiny Swift helper is compiled on first use). Plain
-  microphone recording does not require it.
-- **ffmpeg** — only needed to import/transcribe existing media files
-  (`brew install ffmpeg`). Recording does not require it.
+- **Xcode / Command Line Tools (`swiftc`)** — only for the optional system-audio
+  capture (a tiny Swift helper is compiled on first use).
+- **ffmpeg** — only to import existing media files (`brew install ffmpeg`).
 
-The first run downloads the transcription models (English ≈ 1.5 GB, Turkish
-≈ 1.6 GB) and caches them; later runs are offline-capable for cached models.
+`run.sh` checks for these and offers to install the missing ones. The first run
+downloads the transcription models (≈1.5–1.6 GB) and caches them.
 
 ---
 
-## Quick start (one command)
+## Quick start
 
 ```bash
 ./run.sh
 ```
 
-`run.sh` creates the virtual environment, installs dependencies from
-`requirements.txt` the first time (and only re-installs when that file changes),
-checks for the optional external tools (`ffmpeg` for file import, `swiftc` for
-system-audio capture) and offers to install any that are missing, then launches
-the app. (Set `SKIP_DEP_CHECK=1` to skip the tool check.)
+`run.sh` creates the virtual environment, installs Python dependencies the first
+time (and only when `requirements.txt` changes), offers to install the optional
+external tools if missing, then launches the app.
 
-> If you get `./run.sh: Permission denied`, either run `chmod +x run.sh` once or
-> start it with `bash run.sh`. To pick a specific interpreter:
-> `PYTHON=python3.11 ./run.sh`.
+> Permission denied? Run `chmod +x run.sh` once, or use `bash run.sh`.
+> Pick a Python with `PYTHON=python3.11 ./run.sh`. Skip the tool check with
+> `SKIP_DEP_CHECK=1`.
 
-### Manual setup (alternative)
+<details>
+<summary>Manual setup</summary>
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate        # Windows: .\.venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
-python meeting-transcriptor.py
+python audiocript.py
 ```
+</details>
 
 ---
 
 ## Usage
 
-The app opens a full-screen interface. Controls are single keypresses (no Enter):
+Audiocript is a full-screen app you drive with the **arrow keys**.
 
-| Key | Action |
-|-----|--------|
-| `r` (or `Space`) | Start recording |
-| `f` | Import an existing audio/video file and transcribe it |
-| `q` | While recording: **stop & transcribe**. On the home screen: **quit** |
-| `l` | Toggle transcription language (TR ⇄ EN) |
-| `d` | Open the microphone picker (`1`–`9` to choose, `Esc` to cancel) |
-| `s` | Toggle system-audio capture on/off |
-| `o` | Choose which app opens the transcript (type to filter, `0` = off) |
-| `p` | Edit the recordings folder (`Enter` to save, `Esc` to cancel) |
+| Context | Keys |
+|---------|------|
+| **Menu** | `↑`/`↓` move · `Enter` open/expand · `→`/`←` expand/collapse · `r` rename selected recording · `q` quit |
+| **Transcript viewer** | `↑`/`↓` scroll · `PgUp`/`PgDn` page · `Enter` open in external app · `r` rename · `Esc` back |
+| **Text fields** (name / rename / folder / app filter) | type · `Enter` confirm · `Esc` cancel |
+| **Microphone / app pickers** | `1`–`9` select · `Esc` cancel |
+
+The menu groups everything:
+
+- **New recording** / **Import file** — you're asked for a name first (optional),
+  then it records (or opens a file picker for `mp4`/`mov`/`wav`/`mp3`/`m4a`).
+- **Recordings** — every project (name · date · language). Select one to open the
+  in-app transcript viewer; `Enter` opens it in your external app; `r` renames it.
+- **Settings** — language (TR/EN), microphone, system-audio capture, the
+  "open with" app, and the recordings folder.
 
 `Ctrl-C` exits cleanly at any time.
 
-When you press `r`, the app shows a **"Preparing to record…"** screen while it
-opens the microphone and starts system-audio capture (the first run may compile a
-small helper or ask for a permission). It switches to the recording view and shows
-**"Recording started — speak now."** only once capture has actually begun — so you
-never start talking before it's listening.
+### While recording
 
-While recording, the panel shows a live **VU meter** for each source:
+A **"Preparing…"** screen appears while the mic and system-audio tap start up
+(the first run may compile the helper or ask for a permission), then it switches
+to live **VU meters** and shows **"Recording started — speak now."** Press `q` to
+stop and transcribe.
 
-![Microphone picker](assets/tui-mic-picker.png)
+### Importing a file
 
-When you stop, the app shows a "Transcribing…" panel (the model loads on first
-use), then displays the transcript, saves it, and (optionally) opens it in your
-chosen app.
-
-### Transcribe an existing file
-
-Press `f` to transcribe a file you already have. A native file picker opens; choose
-an `mp4`, `mov`, `wav`, `mp3` or `m4a` file. Its audio is extracted (via ffmpeg)
-into a **new project folder** as `audio.wav` (16 kHz mono) and transcribed using
-the current language — identical to a recording, including the saved
-`transcription.txt` and auto-open. A **live progress panel** shows the current
-phase and how much is left: a real percentage bar for the audio extraction, then
-the transcription progress (a real percentage for English, an elapsed timer for
-Turkish).
-
-### Open the transcript in an app
-
-After each transcript is saved it is opened in an app of your choice (e.g.
-**Sublime Text**, VS Code, TextEdit). Press `o` to pick from your installed apps —
-just start typing to filter the list, press `1`–`9` to select (or `Enter` for the
-first match), or `0` to turn auto-open off. Your choice is saved. On first run the
-app defaults to **Sublime Text** if it is installed, otherwise auto-open is off.
-
-![Open transcript with — app picker](assets/tui-open-with.png)
+Audio is extracted (via ffmpeg) into a new project folder as `audio.wav`
+(16 kHz mono) and transcribed like a recording, with a **live progress panel**
+(real % for extraction and for English transcription).
 
 ---
 
@@ -146,111 +132,103 @@ app defaults to **Sublime Text** if it is installed, otherwise auto-open is off.
 
 ### Recording both mic and system audio
 
-macOS does not let an app record an output (speaker) device directly. Many tools
-work around this with a virtual cable (BlackHole) and a Multi-Output Device, but
-that mutes your own playback or requires fiddly routing. Instead, this app uses a
-**Core Audio process tap** (`CATapDescription` with `muteBehavior = .unmuted`)
-via a small Swift helper (`mac_audio_tap/system_audio_tap.swift`, compiled on
-first use). The tap captures the whole system mix **while you keep hearing it**.
+macOS doesn't let an app record an output device directly. Instead of a virtual
+cable (BlackHole) + Multi-Output Device, Audiocript uses a **Core Audio process
+tap** (`CATapDescription` with `muteBehavior = .unmuted`) via a small Swift helper
+(`mac_audio_tap/system_audio_tap.swift`, compiled on first use). It captures the
+whole system mix **while you keep hearing it**. The mic is captured with
+`sounddevice` at its native rate (never forced), so connecting never changes a
+device's global sample rate or interrupts playback.
 
-The mic is captured with `sounddevice`. Each source is opened at its **native
-sample rate** (never forced to 16 kHz) with
-`CoreAudioSettings(change_device_parameters=False)`, so the app never changes a
-device's global sample rate — which previously could interrupt playing audio.
-
-### Mixing and transcription
+### Mixing & transcription
 
 Each source is resampled to **16 kHz mono** with `torchaudio` (Kaiser
-anti-aliasing filter), the sources are trimmed to the shortest and mixed (summed
-with peak-limiting), and written as a single 16 kHz mono `audio.wav` — exactly
-what Whisper expects. The transcript is produced by the model for the selected
-language and written to `transcription.txt`.
+anti-aliasing), trimmed to the shortest, summed with peak-limiting, and written as
+one mono `audio.wav` — exactly what Whisper expects.
 
-### Output layout
+### Models (per language)
+
+`distil-large-v3` is English-only, so each language uses a dedicated model:
+
+| Language | Model | Runtime |
+|----------|-------|---------|
+| Turkish (`tr`) | [`selimc/whisper-large-v3-turbo-turkish`](https://huggingface.co/selimc/whisper-large-v3-turbo-turkish) | Transformers |
+| English (`en`) | [`ggml-distil-large-v3`](https://huggingface.co/distil-whisper/distil-large-v3-ggml) | whisper.cpp (`pywhispercpp`) |
+
+### Output & configuration
 
 ```
 <recordings folder>/
 └── 2026-06-10_14-30-15/
     ├── audio.wav          # 16 kHz mono mix
-    └── transcription.txt  # transcript
+    ├── transcription.txt  # transcript
+    └── meta.json          # { "name": "Daily standup", "language": "tr" }
 ```
 
-### Configuration (`config.json`)
-
-Saved next to the script and updated as you change settings:
-
-```json
-{
-  "language": "tr",
-  "base_path": "/abs/path/to/recordings",
-  "input_device": "Yeti Stereo Microphone",
-  "capture_system_audio": true,
-  "open_app": "Sublime Text"
-}
-```
-
-`input_device` is stored by **name** (device indices change between sessions).
+Preferences are saved in `config.json` (language, microphone by name, system-audio
+toggle, recordings folder, and the "open with" app).
 
 ---
 
 ## Permissions (macOS)
 
-On first use macOS will prompt for permissions — grant them under
-**System Settings → Privacy & Security**:
+On first use, grant these under **System Settings → Privacy & Security**:
 
-- **Microphone** — for mic recording.
-- **System Audio Recording** — for the system-audio tap. If denied (or if
-  `swiftc` is unavailable), the app automatically continues with mic-only.
-- **Accessibility** — you may see a one-time notice; not required for normal use.
+- **Microphone** — for recording.
+- **System Audio Recording** — for the tap. If denied (or `swiftc` is missing),
+  the app continues mic-only.
 
 ---
 
 ## Troubleshooting
 
-- **A level bar stays empty / shows `no signal`** — that source isn't capturing.
-  For the mic, pick a real microphone with `d` (not a virtual device). For system
-  audio, make sure something is actually playing and the permission was granted.
-- **System audio is off / "system audio unavailable"** — install Xcode Command
-  Line Tools (`xcode-select --install`) so the helper can compile, and grant the
-  *System Audio Recording* permission.
-- **First transcription is slow** — the model is downloaded and loaded on first
-  use; subsequent runs reuse the cache.
+- **A level bar stays empty / `no signal`** — that source isn't capturing. Pick a
+  real microphone in Settings; for system audio make sure something is playing and
+  the permission was granted.
+- **System audio unavailable** — install the Xcode Command Line Tools
+  (`xcode-select --install`) and grant *System Audio Recording*.
+- **Can't import a file** — install ffmpeg (`brew install ffmpeg`).
+- **First transcription is slow** — the model loads on first use, then it's cached.
 
 ---
 
 ## Project structure
 
 ```
-meeting-transcriptor.py        # the app (TUI + recording + transcription)
+audiocript.py                  # the app (TUI + recording + transcription)
 mac_audio_tap/
   └── system_audio_tap.swift   # Core Audio process-tap helper (compiled on first run)
 run.sh                         # one-command launcher
 requirements.txt
+assets/                        # logo, header, screenshots
 docs/superpowers/specs/        # design notes
 ```
-
-There is also a standalone `mp4-transcriptor.py` helper that predates the in-app
-**Import file** feature (`f`); for most uses, importing a file in the app is the
-simpler path.
 
 ---
 
 ## Contributing
 
-Contributions are welcome — please read [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[Code of Conduct](CODE_OF_CONDUCT.md). For security issues, see
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md). For security reports, see
 [SECURITY.md](SECURITY.md).
+
+## Credits & attribution
+
+Audiocript is a derivative of **[voice_transcriptor](https://github.com/semihshn/voice_transcriptor)
+by Semih Şahan**, used and distributed under the terms of its **MIT License**. The
+original copyright and license are retained in [LICENSE](LICENSE). Thank you to the
+original author for releasing the project under a permissive license.
 
 ## License
 
-Released under the [MIT License](LICENSE).
+Released under the **MIT License** — see [LICENSE](LICENSE).
+Copyright © 2025 Semih Şahan (original author of voice_transcriptor) and the
+Audiocript contributors. As required by the MIT License, the original copyright
+notice and permission notice are preserved.
 
 ## Acknowledgements
 
-- [OpenAI Whisper](https://github.com/openai/whisper) and
-  [Distil-Whisper](https://github.com/huggingface/distil-whisper)
+- [OpenAI Whisper](https://github.com/openai/whisper) · [Distil-Whisper](https://github.com/huggingface/distil-whisper)
 - [`selimc/whisper-large-v3-turbo-turkish`](https://huggingface.co/selimc/whisper-large-v3-turbo-turkish)
-- [whisper.cpp](https://github.com/ggerganov/whisper.cpp) /
-  [`pywhispercpp`](https://github.com/absadiki/pywhispercpp)
-- [Rich](https://github.com/Textualize/rich), [sounddevice](https://python-sounddevice.readthedocs.io/)
-- Semih Şahan as the owner of original idea and [base repository](https://github.com/semihshn/voice_transcriptor)
+- [whisper.cpp](https://github.com/ggerganov/whisper.cpp) · [`pywhispercpp`](https://github.com/absadiki/pywhispercpp)
+- [Rich](https://github.com/Textualize/rich) · [sounddevice](https://python-sounddevice.readthedocs.io/)

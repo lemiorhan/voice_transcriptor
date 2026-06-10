@@ -77,4 +77,4 @@ if [ "${SKIP_DEP_CHECK:-0}" != "1" ]; then
 fi
 
 # 4) Launch the app (pass through any arguments).
-exec "$VPY" meeting-transcriptor.py "$@"
+exec "$VPY" audiocript.py "$@"

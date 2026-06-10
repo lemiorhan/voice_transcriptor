@@ -8,7 +8,7 @@ Closes #
 
 ## How was this tested?
 
-- [ ] `python -m py_compile meeting-transcriptor.py`
+- [ ] `python -m py_compile audiocript.py`
 - [ ] Ran the app (`./run.sh`) and exercised the affected paths
 - [ ] Tested microphone recording
 - [ ] Tested system-audio capture (if relevant)

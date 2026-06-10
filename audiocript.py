@@ -893,7 +893,7 @@ def _tui_header(state):
     open_with = state.open_app or "[dim]off[/dim]"
     line2 = f"[dim]Folder[/dim] {state.base_path}     [dim]Open with[/dim] {open_with}"
     return Panel(Text.from_markup(line1 + "\n" + line2),
-                 title="🎙  Voice Transcriptor", title_align="left",
+                 title="🎙  Audiocript", title_align="left",
                  subtitle=clock, subtitle_align="right", border_style="cyan")
 
 
@@ -1529,7 +1529,7 @@ def main():
     state = _TuiState(cfg)
 
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        console.print("Voice Transcriptor needs an interactive terminal.")
+        console.print("Audiocript needs an interactive terminal.")
         return
 
     _QUIET = True  # keep library/app prints off the full-screen UI

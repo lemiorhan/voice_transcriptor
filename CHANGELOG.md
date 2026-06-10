@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+- **Renamed the app to Audiocript** (logo, header banner, all UI text and the
+  main script `audiocript.py`).
+
+### Branding / docs
+- Added a parrot **logo** and a **header banner**, and a professional README with
+  badges and screenshots.
+- **Attribution & license:** Audiocript is a derivative of
+  [voice_transcriptor](https://github.com/semihshn/voice_transcriptor) by
+  Semih Şahan, distributed under the original **MIT License** (original copyright
+  retained in `LICENSE`, credited in the README).
+
 ### Added
 - **Arrow-key navigation** with a grouped, collapsible menu (New recording,
   Import file, Recordings ▸ list, Settings ▸ language/mic/system-audio/open-with/
