@@ -61,3 +61,9 @@ docs/_build/
 # IDE / Editör spesifik ayarlar (opsiyonel)
 .vscode/
 .idea/
+
+# Uygulama tarafından üretilen yapılandırma ve kayıtlar
+config.json
+recordings/
+recorded_audio.wav
+transcription.txt

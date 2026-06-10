@@ -1,6 +1,6 @@
 # Ses Transkripsiyon Uygulaması
 
-Bu proje, mikrofon aracılığıyla ses kaydı alıp, Hugging Face Whisper modeli kullanarak transkripsiyon yapan bir Python uygulamasıdır. Uygulama, kullanıcının "q" tuşu ile kaydı durdurmasına olanak tanır, alınan ses verisini WAV dosyası olarak kaydeder ve transkripsiyonu hem konsolda gösterir hem de `transcription.txt` dosyasına ekler. Konsol çıktıları, [Rich](https://rich.readthedocs.io/en/stable/) kütüphanesi kullanılarak kullanıcı dostu hale getirilmiştir.
+Bu proje, mikrofon aracılığıyla ses kaydı alıp, Hugging Face Whisper modeli kullanarak transkripsiyon yapan bir Python uygulamasıdır. Uygulama, kullanıcının "q" tuşu ile kaydı durdurmasına olanak tanır. Her kayıt için, seçtiğiniz proje klasörünün altında zaman damgalı bir alt klasör (proje) oluşturulur ve ses dosyası (`audio.wav`) ile transkripsiyon (`transcription.txt`) bu klasöre kaydedilir. Transkripsiyon dili (Türkçe `tr` veya İngilizce `en`) terminalden seçilir ve `config.json` dosyasında saklanarak sonraki çalıştırmalarda hatırlanır. Konsol çıktıları, [Rich](https://rich.readthedocs.io/en/stable/) kütüphanesi kullanılarak kullanıcı dostu hale getirilmiştir.
 
 
 > **Önemli:** Bu projede, modelin çalışması için **PyTorch** paketi bilgisayarınızda kurulu olmalıdır. Uygulama, transkripsiyon işlemi sırasında GPU yerine CPU kullanır.
@@ -12,17 +12,20 @@ Bu proje, mikrofon aracılığıyla ses kaydı alıp, Hugging Face Whisper model
 - **Interaktif Ses Kaydı:**  
   Kaydı başlatmak için Enter tuşuna basın, kaydı durdurmak için "q" tuşuna basın.
 
-- **Ses Kaydı Dosyası:**  
-  Kaydedilen ses verisi, `recorded_audio.wav` dosyası olarak saklanır.
+- **Proje Klasörleri:**  
+  Başlangıçta kayıtların saklanacağı proje klasörünü onaylarsınız (varsayılan `./recordings`). Her kayıt için bu klasörün altında `YYYY-MM-DD_HH-MM-SS` biçiminde zaman damgalı bir alt klasör oluşturulur; ses dosyası `audio.wav`, transkripsiyon ise `transcription.txt` olarak bu klasöre kaydedilir.
+
+- **Dil Seçimi:**  
+  Transkripsiyon dilini terminalden seçersiniz: `tr` (Türkçe) veya `en` (İngilizce). Seçiminiz `config.json` dosyasında saklanır ve siz değiştirene kadar kullanılır. Menüden `l` tuşu ile dili her zaman değiştirebilirsiniz.
 
 - **Transkripsiyon:**  
-  Hugging Face’in Whisper modeli kullanılarak alınan ses dosyası metne dönüştürülür.
+  Hugging Face’in Whisper modeli kullanılarak, seçilen dilde alınan ses dosyası metne dönüştürülür.
 
 - **Kullanıcı Dostu Konsol Çıktıları:**  
   [Rich](https://rich.readthedocs.io/en/stable/) kütüphanesi ile stilize edilmiş paneller, renkli mesajlar ve interaktif promptlar kullanılır.
 
 - **Sürekli Kullanım:**  
-  Her kayıttan sonra kullanıcıya yeni kayıt yapıp yapmayacağını sorar; varsayılan cevap "y"dir.
+  Her kayıttan sonra bir menü gösterilir: `[Enter]` yeni kayıt, `l` dili değiştir, `q` çıkış.
 
 ---
 
@@ -98,14 +101,18 @@ Terminalde scripti çalıştırdığınızda, "Ses Transkripsiyon Uygulamasına 
 ### Kayda Başlama:
 Kayıt yapmak için Enter tuşuna basın. Kayıt başladıktan sonra, kaydı durdurmak için "q" tuşuna basın.
 
+### Başlangıç (Proje Klasörü ve Dil):
+Uygulama açıldığında önce kayıtların saklanacağı proje klasörünü onaylamanız istenir (Enter ile varsayılanı kabul edebilir veya yeni bir yol girebilirsiniz). İlk çalıştırmada ayrıca transkripsiyon dilini (`tr`/`en`) seçersiniz. Bu tercihler `config.json` dosyasına kaydedilir.
+
 ### Transkripsiyon:
-Kayıt durduktan sonra, ses dosyası `recorded_audio.wav` olarak kaydedilir ve model (Whisper) otomatik olarak transkripsiyon yapar. Sonuç, konsolda görüntülenecek ve `transcription.txt` dosyasına eklenmiş olacaktır.
+Kayıt durduktan sonra, ses dosyası ilgili proje alt klasörüne `audio.wav` olarak kaydedilir ve model (Whisper) seçilen dilde transkripsiyon yapar. Sonuç konsolda görüntülenir ve aynı klasöre `transcription.txt` olarak yazılır.
 
-### Yeni Kayıt:
-Uygulama, "Yeni bir kayıt yapmak ister misiniz? (y/n)" diye soracaktır.
+### Menü:
+Her kayıttan sonra bir menü gösterilir:
 
-- Varsayılan cevap "y" olduğundan, sadece Enter'a basarsanız yeni kayıt başlatılır.
-- "n" girerseniz, uygulama kapanır.
+- `[Enter]` — yeni kayıt başlatır.
+- `l` — transkripsiyon dilini (`tr`/`en`) değiştirir; tercih hemen `config.json`'a kaydedilir.
+- `q` — uygulamadan çıkar.
 
 ### Notlar:
 - macOS ortamında "This process is not trusted! Input event monitoring will not be possible until it is added to accessibility clients." uyarısı alabilirsiniz. Bu, sistem erişilebilirlik izinleriyle ilgilidir ve uygulamanın çalışmasını etkilemez. Uyarının görünmemesini istiyorsanız, Terminal veya kullandığınız IDE'yi Erişilebilirlik listesine eklemeniz gerekebilir.
