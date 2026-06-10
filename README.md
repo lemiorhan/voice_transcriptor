@@ -19,16 +19,17 @@ Bu proje, mikrofon aracılığıyla ses kaydı alıp, Hugging Face Whisper model
   Transkripsiyon dilini terminalden seçersiniz: `tr` (Türkçe) veya `en` (İngilizce). Seçiminiz `config.json` dosyasında saklanır ve siz değiştirene kadar kullanılır. Menüden `l` tuşu ile dili her zaman değiştirebilirsiniz.
 
 - **Başlangıçta Hatırlanan Varsayılanlar:**  
-  Her açılışta proje klasörü, dil, mikrofon ve hoparlör (sistem sesi) kaynağı sırayla sorulur ve **en son seçiminiz varsayılan olarak önerilir** — değiştirmek istemiyorsanız sadece `Enter`'a basın. Tüm seçimler `config.json`'da saklanır (cihazlar **isimle**, çünkü cihaz indeksleri oturumlar arasında değişebilir).
+  Her açılışta proje klasörü, dil, mikrofon ve sistem sesi kaydı seçeneği sırayla sorulur ve **en son seçiminiz varsayılan olarak önerilir** — değiştirmek istemiyorsanız sadece `Enter`'a basın. Tüm seçimler `config.json`'da saklanır (mikrofon **isimle**, çünkü cihaz indeksleri oturumlar arasında değişebilir).
 
 - **Mikrofon (Giriş) Seçimi:**  
-  Giriş yapabilen ses cihazları (fiziksel mikrofonlar ve `BlackHole`, `ZoomAudioDevice`, `Microsoft Teams Audio` gibi sanal/uygulama cihazları) listelenir ve birini seçersiniz. Menüden `d` tuşu ile her zaman değiştirebilirsiniz.
+  Giriş yapabilen ses cihazları (fiziksel mikrofonlar ve `ZoomAudioDevice`, `Microsoft Teams Audio` gibi sanal/uygulama cihazları) listelenir ve birini seçersiniz. Menüden `d` tuşu ile her zaman değiştirebilirsiniz.
 
-- **Hoparlör (Sistem Sesi) Kaydı — Mikrofon ile Birlikte:**  
-  İsteğe bağlı bir **hoparlör / sistem sesi kaynağı** seçebilirsiniz (varsayılan öneri: `BlackHole`). Seçildiğinde uygulama **mikrofonu ve hoparlör sesini aynı anda** kaydeder ve tek bir mono WAV dosyasında birleştirir (transkripsiyon için yeterli; kaynaklar en kısa olana göre kırpılır, toplanır ve gerekirse kırpılmayı önlemek için ölçeklenir). Menüden `s` tuşu ile bu kaynağı seçebilir veya kapatabilirsiniz; kapalıyken yalnızca mikrofon kaydedilir.  
-  *Not: macOS bir çıkış (hoparlör) cihazını doğrudan kaydetmeye izin vermez. Hoparlör/Zoom sesini yakalamak için sistem (veya Zoom) çıkışını bir loopback giriş cihazına (ör. `BlackHole`) yönlendirmiş olmanız gerekir — genelde `BlackHole` + hoparlörünüzü içeren bir **Multi-Output Device** ile (gerçek çıkış en üstte/clock cihaz olacak ve diğerlerinde Drift Correction açık olacak şekilde), böylece sesi hem duyar hem kaydedersiniz. Bu yönlendirme işletim sistemi tarafında yapılır; uygulama yalnızca cihazı seçip kaydı birleştirir.*
+- **Sistem Sesi Kaydı (Hoparlör/Zoom/YouTube) — Mikrofon ile Birlikte:**  
+  İsteğe bağlı olarak **sistem sesini** de kaydedebilirsiniz. Açıldığında uygulama, **mikrofonu ve tüm sistem sesini aynı anda** kaydedip tek bir mono WAV'da birleştirir (transkripsiyon için). Menüden `s` tuşu ile açıp kapatabilirsiniz; kapalıyken yalnızca mikrofon kaydedilir.  
+  **BlackHole veya yeniden yönlendirme GEREKMEZ:** Sistem sesi, macOS **Core Audio process tap** ile yakalanır ve **sesi duymaya normal şekilde devam edersiniz** (çalan ses kesilmez/sessizleşmez). Bunun için küçük bir Swift yardımcı programı (`mac_audio_tap/system_audio_tap.swift`) ilk kullanımda otomatik derlenir.  
+  *Gereksinimler:* macOS 14.4+ ve Xcode/Command Line Tools (`swiftc`). İlk kullanımda macOS **"Sistem Sesi Kaydı"** izni isteyebilir — onaylayın (Sistem Ayarları → Gizlilik ve Güvenlik). İzin verilmezse uygulama sadece mikrofonla devam eder.
 
-  *Teknik not: Her cihaz, kendi **doğal örnekleme hızında** açılır (16 kHz'e zorlanmaz) ve yazılımda (torchaudio, anti-aliasing'li) 16 kHz mono'ya indirilir. Böylece BlackHole'un cihaz-geneli örnekleme hızı değiştirilmez ve o cihazdan çalan ses (ör. YouTube/Zoom) **kesilmez**.*
+  *Teknik not: Her kaynak kendi **doğal örnekleme hızında** yakalanır ve yazılımda (torchaudio, anti-aliasing'li) 16 kHz mono'ya indirilip birleştirilir (kaynaklar en kısa olana göre kırpılır, toplanır ve gerekirse kırpılmayı önlemek için ölçeklenir).*
 
 - **Dile Göre Model:**  
   Her dil için en iyi sonucu veren ayrı bir model kullanılır:
@@ -48,6 +49,7 @@ Bu proje, mikrofon aracılığıyla ses kaydı alıp, Hugging Face Whisper model
 
 - **Python:** 3.10 sürümü gereklidir.
 - **pip:** Python paket yöneticisi
+- **(İsteğe bağlı, sistem sesi kaydı için)** macOS 14.4+ ve Xcode / Command Line Tools (`swiftc`). Yalnızca "Sistem Sesi Kaydı" özelliğini kullanırsanız gerekir; sadece mikrofon kaydı için gerekmez.
 
 ### Gerekli Python Paketleri
 
@@ -118,8 +120,8 @@ Terminalde scripti çalıştırdığınızda, "Ses Transkripsiyon Uygulamasına 
 ### Kayda Başlama:
 Kayıt yapmak için Enter tuşuna basın. Kayıt başladıktan sonra, kaydı durdurmak için "q" tuşuna basın.
 
-### Başlangıç (Proje Klasörü, Dil, Mikrofon, Hoparlör):
-Uygulama her açıldığında sırayla şunları sorar: proje klasörü, transkripsiyon dili (`tr`/`en`), mikrofon ve hoparlör (sistem sesi) kaynağı. **Her birinde en son seçiminiz varsayılan olarak gelir; korumak için `Enter`'a basın, değiştirmek için yeni değeri girin/seçin.** Tercihler `config.json` dosyasına kaydedilir. **Önemli:** Sisteminizin varsayılan girişi `BlackHole` gibi sanal bir cihazsa ve oraya ses yönlendirilmiyorsa kayıt sessiz olur; bu yüzden mikrofon olarak gerçek mikrofonunuzu seçtiğinizden emin olun.
+### Başlangıç (Proje Klasörü, Dil, Mikrofon, Sistem Sesi):
+Uygulama her açıldığında sırayla şunları sorar: proje klasörü, transkripsiyon dili (`tr`/`en`), mikrofon ve sistem sesi kaydı (açık/kapalı). **Her birinde en son seçiminiz varsayılan olarak gelir; korumak için `Enter`'a basın, değiştirmek için yeni değeri girin/seçin.** Tercihler `config.json` dosyasına kaydedilir. **Önemli:** Mikrofon olarak gerçek mikrofonunuzu seçtiğinizden emin olun (varsayılan giriş sanal bir cihazsa kayıt sessiz olabilir).
 
 ### Transkripsiyon:
 Kayıt durduktan sonra, ses dosyası ilgili proje alt klasörüne `audio.wav` olarak kaydedilir ve seçilen dile uygun model (Türkçe için `selimc/whisper-large-v3-turbo-turkish`, İngilizce için `ggml-distil-large-v3`) transkripsiyon yapar. Sonuç konsolda görüntülenir ve aynı klasöre `transcription.txt` olarak yazılır.
@@ -130,8 +132,9 @@ Her kayıttan sonra bir menü gösterilir:
 - `[Enter]` — yeni kayıt başlatır.
 - `l` — transkripsiyon dilini (`tr`/`en`) değiştirir; tercih hemen `config.json`'a kaydedilir.
 - `d` — mikrofon (giriş) cihazını değiştirir; tercih hemen `config.json`'a kaydedilir.
-- `s` — hoparlör (sistem sesi) kaynağını seçer veya kapatır; tercih hemen `config.json`'a kaydedilir.
+- `s` — sistem sesi kaydını açar/kapatır (Core Audio tap); tercih hemen `config.json`'a kaydedilir.
 - `q` — uygulamadan çıkar.
 
 ### Notlar:
 - macOS ortamında "This process is not trusted! Input event monitoring will not be possible until it is added to accessibility clients." uyarısı alabilirsiniz. Bu, sistem erişilebilirlik izinleriyle ilgilidir ve uygulamanın çalışmasını etkilemez. Uyarının görünmemesini istiyorsanız, Terminal veya kullandığınız IDE'yi Erişilebilirlik listesine eklemeniz gerekebilir.
+- Sistem sesi kaydını ilk kez açtığınızda macOS **"Sistem Sesi Kaydı"** izni isteyebilir. İzin verilmezse (veya `swiftc` yoksa) uygulama otomatik olarak sadece mikrofonla devam eder.

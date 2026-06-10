@@ -20,16 +20,16 @@ A `config.json` file lives next to the script and stores:
   "language": "tr",
   "base_path": "/abs/path/to/recordings",
   "input_device": "MX Brio",
-  "speaker_device": "BlackHole 2ch"
+  "capture_system_audio": true
 }
 ```
 
 - Created on first run, updated whenever the user changes language, base path,
-  mic device, or the speaker (system-audio) source.
+  mic device, or the system-audio capture toggle.
 - `language` is one of `"tr"` or `"en"`.
-- `input_device` / `speaker_device` are device **names** (not indices), since
-  indices change between sessions as devices connect/disconnect.
-- `speaker_device` is optional/absent. When absent, recording is mic-only.
+- `input_device` is the mic device **name** (not index), since indices change
+  between sessions as devices connect/disconnect.
+- `capture_system_audio` is a bool. When false/absent, recording is mic-only.
 
 ### Startup flow
 
@@ -41,68 +41,65 @@ default** — pressing Enter keeps the last choice, typing/selecting changes it.
    first run. Created if missing. Saved to config.
 3. **Transcription language.** Default = saved language (or `tr`). Saved to config.
 4. **Mic device.** List all input-capable devices (physical mics plus
-   virtual/app-audio devices like BlackHole/Zoom/Teams); default = saved device's
-   position (or the first device if the saved one is gone). Saved by name.
-5. **Speaker (system audio) source — optional.** List input-capable devices plus
-   an "off (mic only)" choice; default = saved choice, else BlackHole if present,
-   else off. When set, the app records mic + speaker audio together (see below).
-   Saved by name (key `speaker_device`); choosing "off" clears it.
+   virtual/app-audio devices like Zoom/Teams); default = saved device's position
+   (or the first device if the saved one is gone). Saved by name.
+5. **System audio capture — optional (on/off).** A yes/no prompt; default = saved
+   choice. When on, the app records mic + the whole system audio mix together via
+   a Core Audio process tap (see below). Saved as bool `capture_system_audio`.
 
-### Input device
+### Input device (mic)
 
-- The macOS system default input may be a virtual device (e.g. BlackHole), which
-  records silence unless audio is routed into it — the selector lets the user
-  avoid that. The app exposes virtual/loopback devices so Zoom/computer audio can
-  be captured once routed at the OS level, but it does not create that routing.
 - If a device cannot be opened (e.g. unsupported sample rate), `record_audio`
   reports the error and returns `False` so the user can pick another via the menu.
-- Menu gains `d` (mic) and `s` (speaker / system source) options to change
-  devices anytime.
+- Menu gains `d` (mic) and `s` (system-audio on/off) options.
 
-### Mic + speaker audio (record both)
+### Mic + system audio (record both) — Core Audio process taps
 
-macOS does not allow capturing an output/speaker device directly, so speaker
-audio is captured from a loopback **input** device (e.g. BlackHole) that the
-user's system/Zoom output is routed into. The picker is labeled "Speaker (system
-audio)" but selects an input device.
+System (speaker) audio is captured with a **macOS Core Audio process tap**, not
+BlackHole. The tap (`CATapDescription(stereoGlobalTapButExcludeProcesses:)` with
+`muteBehavior = .unmuted`) captures the whole system mix **while playback stays
+audible** — so the user keeps hearing audio and no BlackHole / Multi-Output / output
+rerouting is required. Requires macOS 14.4+.
 
-- `record_audio(filepath, devices, target_fs=16000)` takes a **list** of device
-  indices (`[mic]` or `[mic, speaker]`) and opens one `sd.InputStream` per device
-  concurrently (via `contextlib.ExitStack`).
+**Swift helper** (`mac_audio_tap/system_audio_tap.swift`): creates the tap, a
+**private aggregate device** containing the tap (`kAudioAggregateDeviceTapListKey`;
+note `…TapAutoStartKey` MUST be false — true deadlocks
+`AudioDeviceCreateIOProcIDWithBlock`), an IOProc, and streams the tap's audio to
+stdout as raw little-endian **float32** PCM. Protocol: first stdout line is a text
+header `samplerate=<int> channels=<int> format=f32le\n`, then continuous frames
+until SIGTERM. It is compiled on first use via `swiftc` (cached as
+`mac_audio_tap/system_audio_tap`, gitignored); the source is committed.
 
-#### Capture at native rate, then resample (fixes "selecting speaker stops playback")
+**Python side:**
+- `build_tap_binary()` compiles the helper if the binary is missing/stale; raises
+  if `swiftc` is absent or compilation fails.
+- `TapRecorder` spawns the helper, reads the header (with a 10 s timeout → assume
+  permission issue), then accumulates float32 PCM on a reader thread; `stop()`
+  SIGTERMs the process; `result()` returns the float32 array + rate.
+- `DeviceRecorder` wraps a `sd.InputStream` for the mic at its **native rate**
+  (not forced 16 kHz) with `CoreAudioSettings(change_device_parameters=False)` so
+  PortAudio never changes a device's global sample rate (this also keeps the prior
+  "don't interrupt playback" fix for any device).
+- `record_audio(filepath, mic_device, capture_system=False, target_fs=16000)`
+  starts a `DeviceRecorder` (mic) and, if enabled, a `TapRecorder` concurrently.
+  The mic is **critical** (failure aborts the recording); the tap is **best-effort**
+  (build/permission failure → warn and continue mic-only).
 
-- **Do NOT force 16 kHz on the capture streams.** Each device is opened at its
-  own **native sample rate** (`sd.query_devices(dev,'input')['default_samplerate']`,
-  e.g. 48000 or 44100) and native channel count (capped at 2), with
-  `extra_settings=sd.CoreAudioSettings(change_device_parameters=False)`.
-  - **Why:** `kAudioDevicePropertyNominalSampleRate` is a single device-global
-    property. Opening BlackHole at a non-native 16 kHz can make PortAudio force
-    that property, triggering a HAL renegotiation across *all* clients on the
-    device — including the browser feeding YouTube into BlackHole — which stops
-    playback. Capturing at the native rate + forbidding device-parameter changes
-    guarantees no such renegotiation. (Verified high-confidence root cause via
-    PortAudio `setBestSampleRateForDevice` + BlackHole maintainer notes.)
-- After stop, each device's int16 buffer (mono or stereo) is converted to 16 kHz
-  mono by `resample_to_target`: int16→float, average channels to mono, and if the
-  native rate ≠ 16000, resample with `torchaudio.functional.resample` using a
-  Kaiser anti-aliasing filter (`lowpass_filter_width=64, rolloff=0.945,
-  sinc_interp_kaiser, beta≈14.77`) — ~−89 dB suppression above the 8 kHz Nyquist
-  (naive linear interpolation would alias out-of-band energy into the speech
-  band). float→int16 with rounding and clipping to avoid overshoot wrap. Skips
-  resampling when a device is already at 16 kHz.
-- The resampled 16 kHz mono streams are combined by `mix_to_mono`: trim to the
-  shortest (independent device clocks drift), sum as int32, peak-limit. Written
-  as one **16 kHz mono** WAV (what Whisper expects).
-- `torch`/`torchaudio` are imported lazily inside `resample_to_target` to avoid
-  startup cost when not needed.
-- Purpose is transcription, not production audio: minor inter-stream drift is
-  acceptable since both voices remain intelligible in the mix.
-- The speaker source is optional; absent → mic-only (`[mic]`), preserving the
-  original single-source behavior. `BlackHole` is suggested as the default when
-  present. Capturing Zoom audio still requires the user to route Zoom/system
-  output into that device at the OS level (e.g. a Multi-Output Device with the
-  real output as the clock device + Drift Correction on).
+#### Native-rate capture → resample → mix
+
+- Each source is captured at its own native rate (mic 48000/44100…, tap 48000).
+- `resample_to_target` converts each (int16 *or* float32, mono/stereo) to 16 kHz
+  mono: to float, average channels, and if native ≠ 16000 resample with
+  `torchaudio.functional.resample` using a Kaiser anti-aliasing filter
+  (`lowpass_filter_width=64, rolloff=0.945, sinc_interp_kaiser, beta≈14.77`,
+  ~−89 dB above the 8 kHz Nyquist; naive linear interpolation would alias into the
+  speech band). float→int16 with rounding + clipping. No-op when already 16 kHz.
+- `mix_to_mono` trims all sources to the shortest (independent clocks drift), sums
+  as int32, peak-limits. Written as one **16 kHz mono** WAV (Whisper's input).
+- `torch`/`torchaudio` are imported lazily inside `resample_to_target`.
+- Purpose is transcription, not production audio: minor inter-stream drift is fine.
+- First system-audio use prompts for the macOS "System Audio Recording" (TCC)
+  permission; if denied, the tap fails to start and recording continues mic-only.
 
 ### Per recording
 
@@ -132,7 +129,7 @@ Each model is lazy-loaded once and cached for the session.
 - `[Enter]` — start a new recording
 - `l` — change language (toggle/select tr or en); updates config immediately
 - `d` — change mic (input) device; updates config immediately
-- `s` — set/clear the speaker (system-audio) source (e.g. BlackHole); updates config
+- `s` — toggle system-audio capture (Core Audio tap) on/off; updates config
 - `q` — quit
 
 ## Code structure
