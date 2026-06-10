@@ -59,7 +59,7 @@ _QUIET = False
 
 # Yapılandırma dosyası, scriptin yanında saklanır.
 CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
-DEFAULT_BASE_PATH = Path(__file__).resolve().parent / "recordings"
+DEFAULT_BASE_PATH = Path.home() / "Audiocript" / "recordings"
 
 # Desteklenen diller: kod -> Whisper dil adı
 LANGUAGES = {"tr": "turkish", "en": "english"}

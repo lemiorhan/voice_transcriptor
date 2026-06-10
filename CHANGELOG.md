@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format is based on
 ### Changed
 - **Renamed the app to Audiocript** (logo, header banner, all UI text and the
   main script `audiocript.py`).
+- Default recordings folder is now `~/Audiocript/recordings` (was inside the repo
+  folder), so the app name — not the repo path — is shown in the UI. Existing
+  saved `base_path` values are unaffected; change it anytime in Settings.
 
 ### Branding / docs
 - Added a parrot **logo** and a **header banner**, and a professional README with

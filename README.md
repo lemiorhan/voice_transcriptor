@@ -220,8 +220,9 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 
 Audiocript is a derivative of **[voice_transcriptor](https://github.com/semihshn/voice_transcriptor)
 by Semih Şahan**, used and distributed under the terms of its **MIT License**. The
-original copyright and license are retained in [LICENSE](LICENSE). Thank you to the
-original author for releasing the project under a permissive license.
+original copyright and license are retained in [LICENSE](LICENSE), and attributions
+for the original work and third-party components are listed in [NOTICE.md](NOTICE.md).
+Thank you to the original author for releasing the project under a permissive license.
 
 ## License
 

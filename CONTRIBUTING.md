@@ -11,7 +11,7 @@ This is a macOS app (it uses Core Audio process taps and `termios`).
 
 ```bash
 git clone <your-fork-url>
-cd voice_transcriptor
+cd audiocript
 ./run.sh        # creates .venv, installs deps, and launches the app
 ```
 
