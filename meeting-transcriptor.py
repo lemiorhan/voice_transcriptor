@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import time
 import shutil
 import threading
 import subprocess
@@ -15,6 +16,8 @@ from pynput import keyboard
 from rich.prompt import Prompt
 from rich.console import Console
 from rich.panel import Panel
+from rich.live import Live
+from rich.text import Text
 
 # Uyarıları bastır (FutureWarning, DeprecationWarning, UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -354,16 +357,25 @@ class DeviceRecorder:
         self.channels = max(1, min(2, int(info['max_input_channels'])))
         self._frames = []
         self._stream = None
+        self._level = 0.0  # canlı VU göstergesi için anlık seviye (0..1)
+        self.meter_name = f"🎤 {self.name}"
 
     @property
     def label(self):
         return f"{self.name} ({self.rate} Hz)"
+
+    def level(self):
+        return self._level
 
     def start(self):
         def callback(indata, n, t, status):
             if status:
                 console.log(f"[red]{status}[/red]")
             self._frames.append(indata.copy())
+            if indata.size:
+                peak = float(np.max(np.abs(indata))) / 32768.0
+                # peak-hold + sönümleme: VU çubuğu sese tepki verir, yumuşak iner.
+                self._level = max(peak, self._level * 0.85)
         kwargs = dict(samplerate=self.rate, channels=self.channels,
                       dtype='int16', device=self.index, callback=callback)
         extra = _coreaudio_extra_settings()
@@ -396,6 +408,7 @@ class TapRecorder:
 
     def __init__(self):
         self.label = "Sistem sesi (Core Audio tap)"
+        self.meter_name = "🔊 Sistem sesi"
         self.rate = None
         self.channels = None
         self._proc = None
@@ -405,6 +418,10 @@ class TapRecorder:
         self._stderr = []
         self._ready = threading.Event()
         self._error = None
+        self._level = 0.0  # canlı VU göstergesi için anlık seviye (0..1)
+
+    def level(self):
+        return self._level
 
     def start(self):
         binpath = build_tap_binary()  # gerekiyorsa derler; başarısızsa RuntimeError
@@ -454,12 +471,16 @@ class TapRecorder:
             self._ready.set()
             return
         self._ready.set()
-        # 2) Kalan veriyi (float32 PCM) topla.
+        # 2) Kalan veriyi (float32 PCM) topla ve canlı seviyeyi güncelle.
         while True:
             data = f.read(8192)
             if not data:
                 break
             self._chunks.append(data)
+            arr = np.frombuffer(data, dtype="<f4")
+            if arr.size:
+                peak = float(np.max(np.abs(arr)))
+                self._level = max(peak, self._level * 0.85)
 
     def stop(self):
         if self._proc is not None and self._proc.poll() is None:
@@ -482,6 +503,26 @@ class TapRecorder:
         if ch > 1:
             arr = arr[:len(arr) // ch * ch].reshape(-1, ch)
         return arr, self.rate
+
+
+def _meter_panel(recorders, elapsed):
+    """Kayıt sırasında her kaynak için canlı seviye çubuğu (VU meter) paneli üretir."""
+    width = 28
+    rows = []
+    for r in recorders:
+        lvl = max(0.0, min(1.0, r.level()))
+        filled = int(round(lvl * width))
+        color = "red" if lvl >= 0.85 else "yellow" if lvl >= 0.5 else "green"
+        name = getattr(r, "meter_name", getattr(r, "label", "?"))
+        bar = f"[{color}]{'█' * filled}[/{color}][dim]{'░' * (width - filled)}[/dim]"
+        # Ses algılanmadıysa kullanıcıyı uyar (kayıt çalışıyor mu anlaşılsın).
+        tag = "" if lvl > 0.01 else "  [dim]ses yok[/dim]"
+        rows.append(f"{name:<18} {bar} {int(lvl * 100):3d}%{tag}")
+    body = Text.from_markup("\n".join(rows) if rows else "[dim](kaynak yok)[/dim]")
+    mm, ss = divmod(int(elapsed), 60)
+    title = f"[blink bold red]●[/] [bold]REC[/] {mm:02d}:{ss:02d}"
+    return Panel(body, title=title, title_align="left",
+                 subtitle="[dim]durdurmak için 'q'[/dim]", border_style="red")
 
 
 def record_audio(filepath, mic_device, capture_system=False, target_fs=16000):
@@ -515,8 +556,6 @@ def record_audio(filepath, mic_device, capture_system=False, target_fs=16000):
     console.print("[bold blue]Kayda başlamak için 'Enter'a basın. Kayıt sırasında durdurmak için 'q' tuşuna basın.[/bold blue]\n")
     input()  # Kullanıcı Enter'a bastığında devam eder
 
-    console.print("[bold yellow]Recording... (Press 'q' to stop)[/bold yellow]")
-
     # Mikrofon akışlarını başlat (kritik: açılamazsa kaydı iptal et).
     started = []
     try:
@@ -544,7 +583,6 @@ def record_audio(filepath, mic_device, capture_system=False, target_fs=16000):
     def on_press(key):
         try:
             if key.char == 'q':
-                console.print("[bold red]Recording stopped.[/bold red]")
                 stop_flag[0] = True
                 return False  # Dinleyiciyi durdur
         except AttributeError:
@@ -552,11 +590,16 @@ def record_audio(filepath, mic_device, capture_system=False, target_fs=16000):
 
     listener = keyboard.Listener(on_press=on_press)
     listener.start()
+    start_t = time.monotonic()
     # try/finally: Ctrl-C (KeyboardInterrupt) veya başka bir hata olsa bile tüm
     # kayıt kaynaklarını (özellikle tap alt sürecini) mutlaka durdur.
+    # Canlı VU göstergesi: konuşunca mikrofon, ses çalınca sistem çubuğu hareket
+    # eder; böylece kaydın çalışıp çalışmadığı anlaşılır.
     try:
-        while not stop_flag[0]:
-            sd.sleep(100)
+        with Live(console=console, refresh_per_second=15, transient=True) as live:
+            while not stop_flag[0]:
+                live.update(_meter_panel(started, time.monotonic() - start_t))
+                sd.sleep(70)
     finally:
         try:
             listener.stop()
@@ -564,6 +607,7 @@ def record_audio(filepath, mic_device, capture_system=False, target_fs=16000):
             pass
         for r in started:
             r.stop()
+    console.print("[bold red]Kayıt durduruldu.[/bold red]")
 
     # Her kaynağı KENDİ hızından 16000 Hz mono'ya yeniden örnekle, sonra birleştir.
     resampled = []
