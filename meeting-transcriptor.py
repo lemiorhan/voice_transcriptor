@@ -3,6 +3,9 @@ import sys
 import json
 import time
 import shutil
+import tty
+import select
+import contextlib
 import threading
 import subprocess
 import termios  # Unix tabanlı sistemlerde çalışır.
@@ -13,11 +16,11 @@ import numpy as np
 import sounddevice as sd
 import warnings
 from pynput import keyboard
-from rich.prompt import Prompt
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.live import Live
 from rich.text import Text
+from rich.layout import Layout
 
 # Uyarıları bastır (FutureWarning, DeprecationWarning, UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -49,6 +52,10 @@ def _silence_ml_logging():
 
 # Rich için konsol nesnesi oluşturuyoruz
 console = Console()
+
+# Tam ekran TUI etkinken kütüphane/uygulama yazdırmaları ekranı bozmasın diye
+# bastırılır (durum bilgisi arayüzde gösterilir).
+_QUIET = False
 
 # Yapılandırma dosyası, scriptin yanında saklanır.
 CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
@@ -136,42 +143,8 @@ def save_config(cfg):
 
 
 def lang_name(code):
-    """Dil kodunu ('tr'/'en') Whisper'ın beklediği dil adına çevirir."""
+    """Map a language code ('tr'/'en') to the name Whisper expects."""
     return LANGUAGES.get(code, "turkish")
-
-
-def confirm_base_path(cfg):
-    """
-    Proje klasörünün yolunu kullanıcıya onaylatır.
-    Kaydedilmiş yol varsa onu, yoksa varsayılanı önerir. Klasörü oluşturur.
-    """
-    current = cfg.get("base_path") or str(DEFAULT_BASE_PATH)
-    console.print(
-        f"[bold blue]Kayıtların saklanacağı proje klasörü:[/bold blue] [cyan]{current}[/cyan]"
-    )
-    answer = Prompt.ask(
-        "Bu yolu kullanmak için Enter'a basın veya yeni bir yol girin",
-        default=current,
-    )
-    base_path = Path(os.path.expanduser(answer.strip() or current)).resolve()
-    base_path.mkdir(parents=True, exist_ok=True)
-    cfg["base_path"] = str(base_path)
-    save_config(cfg)
-    console.print(f"[green]Proje klasörü: {base_path}[/green]\n")
-    return base_path
-
-
-def select_language(cfg):
-    """tr/en arasından dil seçtirir ve yapılandırmaya kaydeder. Dil kodunu döndürür."""
-    choice = Prompt.ask(
-        "Transkripsiyon dili seçin",
-        choices=list(LANGUAGES.keys()),
-        default=cfg.get("language", "tr"),
-    )
-    cfg["language"] = choice
-    save_config(cfg)
-    console.print(f"[green]Seçilen dil: {choice} ({lang_name(choice)})[/green]\n")
-    return choice
 
 
 def list_input_devices():
@@ -184,68 +157,11 @@ def list_input_devices():
 
 
 def device_name(index):
-    """Cihaz index'inden ismini döndürür; bulunamazsa index'i string olarak verir."""
+    """Return a device's name from its index, or the index as text if unknown."""
     try:
         return sd.query_devices(index)["name"]
     except Exception:
         return str(index)
-
-
-def select_input_device(cfg):
-    """
-    Kullanıcıya giriş cihazı seçtirir, ismini config'e kaydeder ve index'i döndürür.
-    Sanal/uygulama cihazları (BlackHole, Zoom, Teams) da listelenir; böylece
-    yönlendirilmiş (loopback) bir kaynaktan da kayıt yapılabilir.
-    """
-    devices = list_input_devices()
-    if not devices:
-        console.print("[bold red]Giriş yapabilen ses cihazı bulunamadı![/bold red]")
-        return None
-
-    console.print("[bold blue]Kullanılabilir giriş (mikrofon/ses) cihazları:[/bold blue]")
-    for n, (idx, name) in enumerate(devices):
-        console.print(f"  [cyan]{n}[/cyan]) {name}")
-
-    # Önceki seçimi varsayılan yap (varsa).
-    current_name = cfg.get("input_device")
-    default_choice = "0"
-    for n, (_, name) in enumerate(devices):
-        if name == current_name:
-            default_choice = str(n)
-            break
-
-    choice = Prompt.ask(
-        "Bir cihaz seçin (numara)",
-        choices=[str(n) for n in range(len(devices))],
-        default=default_choice,
-    )
-    idx, name = devices[int(choice)]
-    cfg["input_device"] = name
-    save_config(cfg)
-    console.print(f"[green]Seçilen giriş cihazı: {name} (index {idx})[/green]\n")
-    return idx
-
-
-def select_system_capture(cfg):
-    """
-    Sistem sesinin (hoparlör/Zoom/YouTube) de kaydedilip kaydedilmeyeceğini
-    sorar ve config'e (capture_system_audio: bool) kaydeder. macOS Core Audio
-    process tap ile yakalanır; ses çalmaya DEVAM eder, BlackHole gerekmez.
-    Açık (True) / kapalı (False) döndürür.
-    """
-    current = bool(cfg.get("capture_system_audio", False))
-    default = "e" if current else "h"
-    console.print(
-        "[bold blue]Sistem sesini (hoparlör/Zoom/YouTube) de kaydedeyim mi?[/bold blue] "
-        "[dim](Core Audio tap; sesi duymaya devam edersiniz, BlackHole gerekmez. "
-        "İlk kullanımda 'Sistem Sesi Kaydı' izni istenebilir.)[/dim]"
-    )
-    choice = Prompt.ask("Evet/Hayır", choices=["e", "h"], default=default)
-    val = (choice == "e")
-    cfg["capture_system_audio"] = val
-    save_config(cfg)
-    console.print(f"[green]Sistem sesi kaydı: {'açık' if val else 'kapalı'}[/green]\n")
-    return val
 
 
 def mix_to_mono(arrays):
@@ -329,20 +245,21 @@ def build_tap_binary():
     döndürür. swiftc yoksa veya derleme başarısızsa RuntimeError fırlatır.
     """
     if not TAP_SRC.exists():
-        raise RuntimeError(f"Tap kaynak dosyası bulunamadı: {TAP_SRC}")
+        raise RuntimeError(f"tap source file not found: {TAP_SRC}")
     if TAP_BIN.exists() and TAP_BIN.stat().st_mtime >= TAP_SRC.stat().st_mtime:
         return TAP_BIN
     swiftc = shutil.which("swiftc")
     if not swiftc:
-        raise RuntimeError("swiftc bulunamadı (Xcode / Command Line Tools gerekli).")
-    console.print("[dim]Sistem sesi yardımcı programı derleniyor (ilk kullanım)...[/dim]")
+        raise RuntimeError("swiftc not found (Xcode / Command Line Tools required).")
+    if not _QUIET:
+        console.print("[dim]Building the system-audio helper (first run)…[/dim]")
     res = subprocess.run(
         [swiftc, "-O", str(TAP_SRC), "-o", str(TAP_BIN),
          "-framework", "CoreAudio", "-framework", "AudioToolbox", "-framework", "Foundation"],
         capture_output=True, text=True,
     )
     if res.returncode != 0 or not TAP_BIN.exists():
-        raise RuntimeError(f"Swift derlemesi başarısız:\n{res.stderr.strip()}")
+        raise RuntimeError(f"Swift build failed:\n{res.stderr.strip()}")
     return TAP_BIN
 
 
@@ -369,7 +286,7 @@ class DeviceRecorder:
 
     def start(self):
         def callback(indata, n, t, status):
-            if status:
+            if status and not _QUIET:
                 console.log(f"[red]{status}[/red]")
             self._frames.append(indata.copy())
             if indata.size:
@@ -436,8 +353,8 @@ class TapRecorder:
         if not self._ready.wait(timeout=10):
             self.stop()
             raise RuntimeError(
-                "Sistem sesi başlatılamadı (10 sn). 'Sistem Sesi Kaydı' izni "
-                "gerekebilir: Sistem Ayarları → Gizlilik ve Güvenlik."
+                "system audio did not start (10s). 'System Audio Recording' "
+                "permission may be needed: System Settings → Privacy & Security."
             )
         if self._error:
             self.stop()
@@ -458,7 +375,7 @@ class TapRecorder:
         while not header.endswith(b"\n"):
             b = f.read(1)
             if not b:
-                self._error = "Yardımcı program başlık vermeden kapandı"
+                self._error = "helper exited before sending a header"
                 self._ready.set()
                 return
             header += b
@@ -467,7 +384,7 @@ class TapRecorder:
             self.rate = int(parts["samplerate"])
             self.channels = int(parts["channels"])
         except Exception:
-            self._error = f"Geçersiz başlık: {header!r}"
+            self._error = f"invalid header: {header!r}"
             self._ready.set()
             return
         self._ready.set()
@@ -505,128 +422,83 @@ class TapRecorder:
         return arr, self.rate
 
 
-def _meter_panel(recorders, elapsed):
-    """Kayıt sırasında her kaynak için canlı seviye çubuğu (VU meter) paneli üretir."""
-    width = 28
-    rows = []
-    for r in recorders:
-        lvl = max(0.0, min(1.0, r.level()))
-        filled = int(round(lvl * width))
-        color = "red" if lvl >= 0.85 else "yellow" if lvl >= 0.5 else "green"
-        name = getattr(r, "meter_name", getattr(r, "label", "?"))
-        bar = f"[{color}]{'█' * filled}[/{color}][dim]{'░' * (width - filled)}[/dim]"
-        # Ses algılanmadıysa kullanıcıyı uyar (kayıt çalışıyor mu anlaşılsın).
-        tag = "" if lvl > 0.01 else "  [dim]ses yok[/dim]"
-        rows.append(f"{name:<18} {bar} {int(lvl * 100):3d}%{tag}")
-    body = Text.from_markup("\n".join(rows) if rows else "[dim](kaynak yok)[/dim]")
-    mm, ss = divmod(int(elapsed), 60)
-    title = f"[blink bold red]●[/] [bold]REC[/] {mm:02d}:{ss:02d}"
-    return Panel(body, title=title, title_align="left",
-                 subtitle="[dim]durdurmak için 'q'[/dim]", border_style="red")
+@contextlib.contextmanager
+def _cbreak_mode():
+    """Read single keystrokes (no Enter, no echo) while keeping Ctrl-C working."""
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        new = termios.tcgetattr(fd)
+        new[3] &= ~(termios.ICANON | termios.ECHO)  # raw-ish, keep ISIG for Ctrl-C
+        termios.tcsetattr(fd, termios.TCSADRAIN, new)
+        yield
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
-def record_audio(filepath, mic_device, capture_system=False, target_fs=16000):
+def _read_key(timeout=0.1):
+    """Return one keystroke or None on timeout. Special: ENTER, BACKSPACE, ESC."""
+    try:
+        r, _, _ = select.select([sys.stdin], [], [], timeout)
+    except Exception:
+        return None
+    if not r:
+        return None
+    fd = sys.stdin.fileno()
+    ch = os.read(fd, 1)
+    if not ch:
+        return None
+    if ch == b"\x1b":                 # ESC or an arrow/escape sequence
+        r2, _, _ = select.select([sys.stdin], [], [], 0.0008)
+        if r2:
+            os.read(fd, 8)            # swallow the rest of the sequence
+            return "ESC_SEQ"
+        return "ESC"
+    if ch in (b"\r", b"\n"):
+        return "ENTER"
+    if ch in (b"\x7f", b"\x08"):
+        return "BACKSPACE"
+    try:
+        return ch.decode("utf-8", "ignore")
+    except Exception:
+        return None
+
+
+def _open_sources(mic_index, capture_system):
     """
-    Mikrofondan (sounddevice) ve isteğe bağlı olarak sistem sesinden (Core Audio
-    tap) EŞ ZAMANLI kayıt yapar; her kaynağı 16000 Hz mono'ya yeniden örnekleyip
-    tek bir mono WAV'da birleştirir. Başarılıysa True döndürür.
-
-    Mikrofon kendi doğal hızında açılır (cihazın global hızını değiştirmemek
-    için). Sistem sesi, hoparlörden ses kesilmeden yakalanır.
+    Start the mic recorder (and the optional system-audio tap) concurrently.
+    Returns (started_recorders, note). Raises if the mic cannot be opened
+    (critical); a tap failure is non-fatal and reported via `note`.
     """
-    recorders = []
-    if mic_device is not None:
-        recorders.append(DeviceRecorder(mic_device))
-
-    # Sistem sesi seçiliyse yardımcı programı ÖNDEN derle (Enter'dan önce), ki
-    # derleme mesajı kayıt akışını bölmesin. Derleme/izin sorunu olursa uyar.
-    tap = None
+    started = []
+    if mic_index is not None:
+        mic = DeviceRecorder(mic_index)
+        mic.start()                   # propagate mic errors to caller
+        started.append(mic)
+    note = None
     if capture_system:
         try:
-            build_tap_binary()
             tap = TapRecorder()
-        except Exception as e:
-            console.print(f"[yellow]Sistem sesi kullanılamıyor, sadece mikrofon: {e}[/yellow]")
-            tap = None
-
-    clear_console()
-    console.print(Panel("Ses Transkripsiyon Uygulamasına Hoşgeldiniz!", style="bold green"), justify="center")
-    labels = [r.label for r in recorders] + ([tap.label] if tap else [])
-    console.print(f"[dim]Kaynak(lar): {', '.join(labels)}[/dim]")
-    console.print("[bold blue]Kayda başlamak için 'Enter'a basın. Kayıt sırasında durdurmak için 'q' tuşuna basın.[/bold blue]\n")
-    input()  # Kullanıcı Enter'a bastığında devam eder
-
-    # Mikrofon akışlarını başlat (kritik: açılamazsa kaydı iptal et).
-    started = []
-    try:
-        for r in recorders:
-            r.start()
-            started.append(r)
-    except Exception as e:
-        for r in started:
-            r.stop()
-        console.print(f"[bold red]Mikrofon açılamadı: {e}[/bold red]")
-        console.print("[yellow]Menüden 'd' ile farklı bir mikrofon seçmeyi deneyin.[/yellow]")
-        return False
-
-    # Sistem sesi akışını başlat (kritik değil: başarısızsa sadece mikrofonla devam).
-    if tap is not None:
-        try:
             tap.start()
             started.append(tap)
         except Exception as e:
-            console.print(f"[yellow]Sistem sesi başlatılamadı, sadece mikrofon ile devam: {e}[/yellow]")
-            tap = None
+            note = f"system audio unavailable: {e}"
+    return started, note
 
-    stop_flag = [False]
 
-    def on_press(key):
-        try:
-            if key.char == 'q':
-                stop_flag[0] = True
-                return False  # Dinleyiciyi durdur
-        except AttributeError:
-            pass
-
-    listener = keyboard.Listener(on_press=on_press)
-    listener.start()
-    start_t = time.monotonic()
-    # try/finally: Ctrl-C (KeyboardInterrupt) veya başka bir hata olsa bile tüm
-    # kayıt kaynaklarını (özellikle tap alt sürecini) mutlaka durdur.
-    # Canlı VU göstergesi: konuşunca mikrofon, ses çalınca sistem çubuğu hareket
-    # eder; böylece kaydın çalışıp çalışmadığı anlaşılır.
-    try:
-        with Live(console=console, refresh_per_second=15, transient=True) as live:
-            while not stop_flag[0]:
-                live.update(_meter_panel(started, time.monotonic() - start_t))
-                sd.sleep(70)
-    finally:
-        try:
-            listener.stop()
-        except Exception:
-            pass
-        for r in started:
-            r.stop()
-    console.print("[bold red]Kayıt durduruldu.[/bold red]")
-
-    # Her kaynağı KENDİ hızından 16000 Hz mono'ya yeniden örnekle, sonra birleştir.
-    resampled = []
-    for r in started:
-        arr, rate = r.result()
-        resampled.append(resample_to_target(arr, rate, target_fs))
+def _finalize_to_wav(started, audio_path, target_fs=16000):
+    """Stop already-stopped sources' data: resample each to 16k mono, mix, write
+    a mono WAV. Returns the number of samples written (0 if nothing captured)."""
+    resampled = [resample_to_target(*src.result(), target_fs) for src in started]
     mixed = mix_to_mono(resampled)
     if mixed is None or len(mixed) == 0:
-        # 'q' kayıt başlamadan basılmış veya hiç ses gelmemiş olabilir.
-        console.print("[bold red]Hiç ses kaydedilemedi; kayıt atlanıyor.[/bold red]")
-        return False
-
-    with wave.open(str(filepath), 'wb') as wf:
+        return 0
+    with wave.open(str(audio_path), 'wb') as wf:
         wf.setnchannels(1)
-        wf.setsampwidth(2)  # 16-bit (2 byte)
-        wf.setframerate(target_fs)  # Whisper 16000 Hz mono bekler
+        wf.setsampwidth(2)            # 16-bit
+        wf.setframerate(target_fs)    # Whisper expects 16 kHz mono
         wf.writeframes(mixed.tobytes())
-    console.print(f"[green]Audio saved to {filepath} ({len(mixed)} samples @ {target_fs} Hz, {len(started)} kaynak)[/green]")
-    return True
+    return len(mixed)
 
 
 def pick_device():
@@ -646,7 +518,8 @@ def _transcribe_turkish(filepath):
         from transformers import pipeline
         _silence_ml_logging()
         device = pick_device()
-        console.print(f"[dim]Türkçe model yükleniyor ({TR_HF_MODEL}, {device})...[/dim]")
+        if not _QUIET:
+            console.print(f"[dim]Türkçe model yükleniyor ({TR_HF_MODEL}, {device})...[/dim]")
         _hf_pipe = pipeline("automatic-speech-recognition", model=TR_HF_MODEL, device=device)
     result = _hf_pipe(
         str(filepath),
@@ -663,7 +536,8 @@ def _transcribe_english(filepath):
         _silence_ml_logging()
         from huggingface_hub import hf_hub_download
         from pywhispercpp.model import Model
-        console.print(f"[dim]İngilizce model hazırlanıyor ({EN_GGML_FILE})...[/dim]")
+        if not _QUIET:
+            console.print(f"[dim]İngilizce model hazırlanıyor ({EN_GGML_FILE})...[/dim]")
         model_path = hf_hub_download(repo_id=EN_GGML_REPO, filename=EN_GGML_FILE)
         # redirect_whispercpp_logs_to=None -> whisper.cpp'nin C/Metal logları /dev/null'a.
         _cpp_model = Model(
@@ -677,87 +551,294 @@ def _transcribe_english(filepath):
 def transcribe_audio(filepath, language_code):
     """Seçilen dile göre uygun model ile transkripsiyon yapar ve metni döndürür."""
     if language_code == "en":
-        console.print("[bold cyan]Transcribing audio (en / ggml-distil-large-v3)...[/bold cyan]")
+        if not _QUIET:
+            console.print("[bold cyan]Transcribing audio (en / ggml-distil-large-v3)...[/bold cyan]")
         return _transcribe_english(filepath)
-    console.print("[bold cyan]Transcribing audio (tr / whisper-large-v3-turbo-turkish)...[/bold cyan]")
+    if not _QUIET:
+        console.print("[bold cyan]Transcribing audio (tr / whisper-large-v3-turbo-turkish)...[/bold cyan]")
     return _transcribe_turkish(filepath)
 
 
-def main():
-    cfg = load_config()
+# =========================== Full-screen TUI ===========================
 
-    clear_console()
-    console.print(Panel("Ses Transkripsiyon Uygulaması", style="bold magenta"), justify="center")
+def _resolve_mic_index(cfg):
+    """Resolve the saved mic device name to a current index; fall back to first."""
+    devices = list_input_devices()
+    name = cfg.get("input_device")
+    if name:
+        for idx, dev_name in devices:
+            if dev_name == name:
+                return idx
+    return devices[0][0] if devices else None
 
-    # Başlangıç: her seçim, kayıtlı değer varsayılan olarak önerilerek sorulur.
-    # (Enter'a basmak kayıtlı değeri korur.)
-    base_path = confirm_base_path(cfg)
-    language = select_language(cfg)
-    device_index = select_input_device(cfg)
-    capture_system = select_system_capture(cfg)
 
-    while True:
-        # Her kayıt için zaman damgalı bir alt klasör (proje) oluştur.
-        project_dir = base_path / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        project_dir.mkdir(parents=True, exist_ok=True)
+class _TuiState:
+    """All UI/app state for the full-screen interface."""
 
-        audio_path = project_dir / "audio.wav"
-        if not record_audio(audio_path, device_index, capture_system):
-            # Kayıt alınamadı: boş proje klasörünü temizle ve baştan başla.
-            try:
-                project_dir.rmdir()
-            except OSError:
-                pass
-            flush_stdin()
-            continue
-
-        transcribed_text = transcribe_audio(audio_path, language)
-        console.print(Panel(f"[bold green]Transcription:[/bold green]\n{transcribed_text}", style="green"), justify="center")
-
-        transcription_path = project_dir / "transcription.txt"
-        with open(transcription_path, "w", encoding="utf-8") as file:
-            file.write(transcribed_text + "\n")
-        console.print(f"[bold green]Proje kaydedildi: {project_dir}[/bold green]\n")
-
-        # Önceki kayıttan kalan karakterleri temizliyoruz.
-        flush_stdin()
-
-        # Kullanıcıya menüyü gösteriyoruz.
-        system_label = "açık" if capture_system else "kapalı"
-        # Not: köşeli parantezler rich tarafından markup sanılmasın diye '\[' ile
-        # kaçışlanır; aksi halde [l]/[d]/[s]/[q] ekranda görünmez.
-        console.print(
-            f"[bold blue]Menü[/bold blue]\n"
-            f"  \\[Enter] Yeni kayıt\n"
-            f"  \\[l] Dili değiştir (mevcut: {language})\n"
-            f"  \\[d] Mikrofonu değiştir (mevcut: {device_name(device_index)})\n"
-            f"  \\[s] Sistem sesi kaydı (mevcut: {system_label})\n"
-            f"  \\[q] Çıkış"
-        )
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.base_path = Path(os.path.expanduser(cfg.get("base_path") or str(DEFAULT_BASE_PATH)))
+        self.language = cfg.get("language") or "tr"
+        self.mic_index = _resolve_mic_index(cfg)
+        self.capture_system = bool(cfg.get("capture_system_audio", False))
+        self.mode = "home"           # home | recording | transcribing | mic_picker | path_edit
+        self.status = "Ready."
+        self.last_transcript = ""
+        self.last_project = None
+        # recording-time
+        self.recorders = []
+        self.project_dir = None
+        self.rec_start = 0.0
+        # pickers
+        self.devices = []
+        self.path_buffer = ""
         try:
-            response = Prompt.ask("Seçiminiz", default="")
+            self.base_path.mkdir(parents=True, exist_ok=True)
         except Exception:
-            response = ""
-        choice = response.strip().lower()
+            pass
 
-        if choice == "q":
-            console.print("[bold yellow]Çıkılıyor...[/bold yellow]")
-            break
-        elif choice == "l":
-            language = select_language(cfg)
-        elif choice == "d":
-            new_index = select_input_device(cfg)
-            if new_index is not None:
-                device_index = new_index
-        elif choice == "s":
-            capture_system = select_system_capture(cfg)
-        # Diğer her durumda (Enter dahil) yeni kayda devam edilir.
+
+def _meters_markup(recorders):
+    width = 30
+    rows = []
+    for r in recorders:
+        lvl = max(0.0, min(1.0, r.level()))
+        filled = int(round(lvl * width))
+        color = "red" if lvl >= 0.85 else "yellow" if lvl >= 0.5 else "green"
+        name = getattr(r, "meter_name", getattr(r, "label", "?"))
+        bar = f"[{color}]{'█' * filled}[/{color}][dim]{'░' * (width - filled)}[/dim]"
+        tag = "" if lvl > 0.01 else "  [dim]no signal[/dim]"
+        rows.append(f"{name:<18}{bar} {int(lvl * 100):3d}%{tag}")
+    return "\n".join(rows) if rows else "[dim](no sources)[/dim]"
+
+
+def _tui_header(state):
+    clock = datetime.now().strftime("%H:%M:%S")
+    mic = device_name(state.mic_index) if state.mic_index is not None else "—"
+    sysv = "[green]on[/green]" if state.capture_system else "[dim]off[/dim]"
+    line1 = (f"[bold]Language[/bold] {state.language.upper()}     "
+             f"[bold]Mic[/bold] {mic}     [bold]System audio[/bold] {sysv}")
+    line2 = f"[dim]Folder[/dim] {state.base_path}"
+    return Panel(Text.from_markup(line1 + "\n" + line2),
+                 title="🎙  Voice Transcriptor", title_align="left",
+                 subtitle=clock, subtitle_align="right", border_style="cyan")
+
+
+def _tui_body(state):
+    if state.mode == "recording":
+        elapsed = time.monotonic() - state.rec_start
+        mm, ss = divmod(int(elapsed), 60)
+        title = f"[blink bold red]●[/] [bold]REC[/] {mm:02d}:{ss:02d}"
+        return Panel(Text.from_markup(_meters_markup(state.recorders)),
+                     title=title, title_align="left", border_style="red")
+    if state.mode == "transcribing":
+        msg = ("[bold yellow]Transcribing…[/bold yellow]\n\n"
+               "[dim]The model loads on first use — this can take a moment.[/dim]")
+        return Panel(Text.from_markup(msg), title="Please wait", border_style="yellow")
+    if state.mode == "mic_picker":
+        lines = []
+        for i, (idx, name) in enumerate(state.devices, start=1):
+            marker = "[green]›[/green]" if idx == state.mic_index else " "
+            sel = i if i <= 9 else "·"
+            lines.append(f"{marker} [cyan]{sel}[/cyan]  {name}")
+        note = "" if len(state.devices) <= 9 else "\n[dim](only 1–9 selectable)[/dim]"
+        body = "\n".join(lines) if lines else "[dim]no input devices[/dim]"
+        return Panel(Text.from_markup(body + note),
+                     title="Select microphone", border_style="cyan")
+    if state.mode == "path_edit":
+        body = f"Recordings folder:\n\n[bold]{state.path_buffer}[/bold][blink]▏[/blink]"
+        return Panel(Text.from_markup(body),
+                     title="Edit folder", border_style="cyan")
+    # home
+    if state.last_transcript:
+        name = state.last_project.name if state.last_project else ""
+        head = Text.from_markup(f"[bold green]Last transcript[/bold green]  [dim]{name}[/dim]")
+        return Panel(Group(head, Text(""), Text(state.last_transcript.strip() or "(empty)")),
+                     border_style="green")
+    return Panel(Text.from_markup("[dim]Press [/dim][bold]r[/bold][dim] to start recording.[/dim]"),
+                 title="Transcript", border_style="green")
+
+
+def _tui_footer(state):
+    keymap = {
+        "home": "[r] Record   [l] Language   [d] Microphone   [s] System audio   [p] Folder   [q] Quit",
+        "recording": "[q] Stop & transcribe",
+        "transcribing": "working…",
+        "mic_picker": "[1-9] Select   [Esc] Cancel",
+        "path_edit": "[Enter] Save   [Backspace] Delete   [Esc] Cancel",
+    }
+    keys = Text(keymap.get(state.mode, ""))          # plain Text: brackets shown literally
+    status = Text(state.status or "", style="dim")
+    return Panel(Group(keys, status), border_style="blue")
+
+
+def _tui_render(state):
+    layout = Layout()
+    layout.split_column(
+        Layout(_tui_header(state), name="header", size=4),
+        Layout(_tui_body(state), name="body"),
+        Layout(_tui_footer(state), name="footer", size=4),
+    )
+    return layout
+
+
+def _start_recording(state):
+    project_dir = state.base_path / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    try:
+        project_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        state.status = f"Folder error: {e}"
+        return
+    try:
+        started, note = _open_sources(state.mic_index, state.capture_system)
+    except Exception as e:
+        state.status = f"Microphone error: {e}"
+        return
+    if not started:
+        state.status = "No microphone available."
+        try:
+            project_dir.rmdir()
+        except Exception:
+            pass
+        return
+    state.recorders = started
+    state.project_dir = project_dir
+    state.rec_start = time.monotonic()
+    state.status = note or "Recording…"
+    state.mode = "recording"
+
+
+def _stop_and_transcribe(state, live):
+    for r in state.recorders:
+        try:
+            r.stop()
+        except Exception:
+            pass
+    audio_path = state.project_dir / "audio.wav"
+    n = _finalize_to_wav(state.recorders, audio_path)
+    state.recorders = []
+    if not n:
+        state.status = "No audio captured; recording discarded."
+        try:
+            state.project_dir.rmdir()
+        except Exception:
+            pass
+        state.mode = "home"
+        return
+    # Show the transcribing screen before the (blocking) model call.
+    state.mode = "transcribing"
+    state.status = "Transcribing…"
+    live.update(_tui_render(state))
+    try:
+        text = transcribe_audio(audio_path, state.language)
+    except Exception as e:
+        state.status = f"Transcription error: {e}"
+        state.mode = "home"
+        return
+    try:
+        with open(state.project_dir / "transcription.txt", "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+    except Exception as e:
+        state.status = f"Save error: {e}"
+    state.last_transcript = text
+    state.last_project = state.project_dir
+    state.status = f"Saved to {state.project_dir.name}"
+    state.mode = "home"
+
+
+def _tui_handle_key(key, state, live):
+    """Dispatch a keystroke. Returns False to quit, True to keep running."""
+    mode = state.mode
+    if mode == "home":
+        if key in ("q", "Q"):
+            return False
+        if key in ("r", "R", " "):
+            _start_recording(state)
+        elif key in ("l", "L"):
+            state.language = "en" if state.language == "tr" else "tr"
+            state.cfg["language"] = state.language
+            save_config(state.cfg)
+            state.status = f"Language set to {state.language.upper()}"
+        elif key in ("s", "S"):
+            state.capture_system = not state.capture_system
+            state.cfg["capture_system_audio"] = state.capture_system
+            save_config(state.cfg)
+            state.status = f"System audio {'on' if state.capture_system else 'off'}"
+        elif key in ("d", "D"):
+            state.devices = list_input_devices()
+            state.mode = "mic_picker"
+        elif key in ("p", "P"):
+            state.path_buffer = str(state.base_path)
+            state.mode = "path_edit"
+    elif mode == "recording":
+        if key in ("q", "Q", "r", "R", " "):
+            _stop_and_transcribe(state, live)
+    elif mode == "mic_picker":
+        if key in ("ESC", "q", "Q", "d", "D"):
+            state.mode = "home"
+        elif key and key.isdigit() and key != "0":
+            i = int(key)
+            if 1 <= i <= len(state.devices):
+                idx, name = state.devices[i - 1]
+                state.mic_index = idx
+                state.cfg["input_device"] = name
+                save_config(state.cfg)
+                state.status = f"Microphone: {name}"
+                state.mode = "home"
+    elif mode == "path_edit":
+        if key == "ESC":
+            state.mode = "home"
+        elif key == "ENTER":
+            raw = state.path_buffer.strip() or str(state.base_path)
+            p = Path(os.path.expanduser(raw)).resolve()
+            try:
+                p.mkdir(parents=True, exist_ok=True)
+                state.base_path = p
+                state.cfg["base_path"] = str(p)
+                save_config(state.cfg)
+                state.status = f"Folder: {p}"
+            except Exception as e:
+                state.status = f"Folder error: {e}"
+            state.mode = "home"
+        elif key == "BACKSPACE":
+            state.path_buffer = state.path_buffer[:-1]
+        elif key and len(key) == 1 and key.isprintable():
+            state.path_buffer += key
+    return True
+
+
+def main():
+    global _QUIET
+    cfg = load_config()
+    state = _TuiState(cfg)
+
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        console.print("Voice Transcriptor needs an interactive terminal.")
+        return
+
+    _QUIET = True  # keep library/app prints off the full-screen UI
+    try:
+        with _cbreak_mode(), Live(_tui_render(state), screen=True, console=console,
+                                  refresh_per_second=15) as live:
+            running = True
+            while running:
+                live.update(_tui_render(state))
+                key = _read_key(0.07)
+                if key is None:
+                    continue
+                running = _tui_handle_key(key, state, live)
+    finally:
+        # Stop any active recorders (e.g. Ctrl-C mid-recording) so the tap
+        # subprocess never lingers.
+        for r in getattr(state, "recorders", []) or []:
+            try:
+                r.stop()
+            except Exception:
+                pass
 
 
 def _handle_sigterm(signum, frame):
-    # `kill` (SIGTERM) gelince Ctrl-C ile aynı temiz çıkış yolunu kullan:
-    # KeyboardInterrupt fırlatınca record_audio'daki finally tüm kaynakları
-    # (tap alt süreci dahil) durdurur ve aşağıdaki handler temiz mesaj basar.
+    # On `kill` (SIGTERM), take the same clean path as Ctrl-C.
     raise KeyboardInterrupt
 
 
@@ -770,5 +851,5 @@ if __name__ == "__main__":
     try:
         main()
     except (KeyboardInterrupt, EOFError):
-        console.print("\n[bold yellow]Çıkılıyor...[/bold yellow]")
+        console.print("\n[bold yellow]Exiting…[/bold yellow]")
         sys.exit(0)
