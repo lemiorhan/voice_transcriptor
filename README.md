@@ -26,7 +26,9 @@ Bu proje, mikrofon aracılığıyla ses kaydı alıp, Hugging Face Whisper model
 
 - **Hoparlör (Sistem Sesi) Kaydı — Mikrofon ile Birlikte:**  
   İsteğe bağlı bir **hoparlör / sistem sesi kaynağı** seçebilirsiniz (varsayılan öneri: `BlackHole`). Seçildiğinde uygulama **mikrofonu ve hoparlör sesini aynı anda** kaydeder ve tek bir mono WAV dosyasında birleştirir (transkripsiyon için yeterli; kaynaklar en kısa olana göre kırpılır, toplanır ve gerekirse kırpılmayı önlemek için ölçeklenir). Menüden `s` tuşu ile bu kaynağı seçebilir veya kapatabilirsiniz; kapalıyken yalnızca mikrofon kaydedilir.  
-  *Not: macOS bir çıkış (hoparlör) cihazını doğrudan kaydetmeye izin vermez. Hoparlör/Zoom sesini yakalamak için sistem (veya Zoom) çıkışını bir loopback giriş cihazına (ör. `BlackHole`) yönlendirmiş olmanız gerekir — genelde `BlackHole` + hoparlörünüzü içeren bir **Multi-Output Device** ile, böylece sesi hem duyar hem kaydedersiniz. Bu yönlendirme işletim sistemi tarafında yapılır; uygulama yalnızca cihazı seçip kaydı birleştirir.*
+  *Not: macOS bir çıkış (hoparlör) cihazını doğrudan kaydetmeye izin vermez. Hoparlör/Zoom sesini yakalamak için sistem (veya Zoom) çıkışını bir loopback giriş cihazına (ör. `BlackHole`) yönlendirmiş olmanız gerekir — genelde `BlackHole` + hoparlörünüzü içeren bir **Multi-Output Device** ile (gerçek çıkış en üstte/clock cihaz olacak ve diğerlerinde Drift Correction açık olacak şekilde), böylece sesi hem duyar hem kaydedersiniz. Bu yönlendirme işletim sistemi tarafında yapılır; uygulama yalnızca cihazı seçip kaydı birleştirir.*
+
+  *Teknik not: Her cihaz, kendi **doğal örnekleme hızında** açılır (16 kHz'e zorlanmaz) ve yazılımda (torchaudio, anti-aliasing'li) 16 kHz mono'ya indirilir. Böylece BlackHole'un cihaz-geneli örnekleme hızı değiştirilmez ve o cihazdan çalan ses (ör. YouTube/Zoom) **kesilmez**.*
 
 - **Dile Göre Model:**  
   Her dil için en iyi sonucu veren ayrı bir model kullanılır:

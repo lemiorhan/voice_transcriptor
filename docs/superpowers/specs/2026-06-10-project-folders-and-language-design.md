@@ -66,20 +66,43 @@ audio is captured from a loopback **input** device (e.g. BlackHole) that the
 user's system/Zoom output is routed into. The picker is labeled "Speaker (system
 audio)" but selects an input device.
 
-- `record_audio(filepath, devices, fs)` takes a **list** of device indices
-  (`[mic]` or `[mic, speaker]`) and opens one `sd.InputStream` per device
-  concurrently (via `contextlib.ExitStack`), each at `channels=1, dtype=int16,
-  fs=16000`, accumulating into its own buffer.
-- On stop, buffers are concatenated per device and combined by `mix_to_mono`:
-  trim all signals to the shortest length (independent device clocks drift),
-  sum as int32, then scale down if the peak exceeds the int16 range (soft limit
-  instead of hard clipping). Result is written as one mono WAV.
+- `record_audio(filepath, devices, target_fs=16000)` takes a **list** of device
+  indices (`[mic]` or `[mic, speaker]`) and opens one `sd.InputStream` per device
+  concurrently (via `contextlib.ExitStack`).
+
+#### Capture at native rate, then resample (fixes "selecting speaker stops playback")
+
+- **Do NOT force 16 kHz on the capture streams.** Each device is opened at its
+  own **native sample rate** (`sd.query_devices(dev,'input')['default_samplerate']`,
+  e.g. 48000 or 44100) and native channel count (capped at 2), with
+  `extra_settings=sd.CoreAudioSettings(change_device_parameters=False)`.
+  - **Why:** `kAudioDevicePropertyNominalSampleRate` is a single device-global
+    property. Opening BlackHole at a non-native 16 kHz can make PortAudio force
+    that property, triggering a HAL renegotiation across *all* clients on the
+    device — including the browser feeding YouTube into BlackHole — which stops
+    playback. Capturing at the native rate + forbidding device-parameter changes
+    guarantees no such renegotiation. (Verified high-confidence root cause via
+    PortAudio `setBestSampleRateForDevice` + BlackHole maintainer notes.)
+- After stop, each device's int16 buffer (mono or stereo) is converted to 16 kHz
+  mono by `resample_to_target`: int16→float, average channels to mono, and if the
+  native rate ≠ 16000, resample with `torchaudio.functional.resample` using a
+  Kaiser anti-aliasing filter (`lowpass_filter_width=64, rolloff=0.945,
+  sinc_interp_kaiser, beta≈14.77`) — ~−89 dB suppression above the 8 kHz Nyquist
+  (naive linear interpolation would alias out-of-band energy into the speech
+  band). float→int16 with rounding and clipping to avoid overshoot wrap. Skips
+  resampling when a device is already at 16 kHz.
+- The resampled 16 kHz mono streams are combined by `mix_to_mono`: trim to the
+  shortest (independent device clocks drift), sum as int32, peak-limit. Written
+  as one **16 kHz mono** WAV (what Whisper expects).
+- `torch`/`torchaudio` are imported lazily inside `resample_to_target` to avoid
+  startup cost when not needed.
 - Purpose is transcription, not production audio: minor inter-stream drift is
   acceptable since both voices remain intelligible in the mix.
 - The speaker source is optional; absent → mic-only (`[mic]`), preserving the
   original single-source behavior. `BlackHole` is suggested as the default when
   present. Capturing Zoom audio still requires the user to route Zoom/system
-  output into that device at the OS level (e.g. a Multi-Output Device).
+  output into that device at the OS level (e.g. a Multi-Output Device with the
+  real output as the clock device + Drift Correction on).
 
 ### Per recording
 

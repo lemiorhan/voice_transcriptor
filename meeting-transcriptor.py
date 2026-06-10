@@ -234,20 +234,75 @@ def mix_to_mono(arrays):
     return acc.astype(np.int16)
 
 
-def record_audio(filepath, devices, fs=16000):
+def resample_to_target(arr, src_fs, target_fs=16000):
+    """
+    int16 (mono veya çok kanallı) bir sinyali hedef örnekleme hızında (Whisper
+    için 16000 Hz) mono int16'ya dönüştürür. Çok kanallıysa kanalları ortalar.
+    src_fs == target_fs ise yeniden örnekleme yapmadan sadece mono'ya indirger.
+    Yeniden örnekleme için torchaudio kullanılır (anti-aliasing'li, kaliteli).
+    """
+    if arr is None or len(arr) == 0:
+        return None
+    f = arr.astype(np.float32) / 32768.0
+    if f.ndim == 2:                       # (N, kanal) -> ortalama ile mono
+        f = f.mean(axis=1)
+    if src_fs != target_fs:
+        import torch
+        import torchaudio.functional as AF
+        w = torch.from_numpy(np.ascontiguousarray(f))
+        # Yüksek kaliteli, anti-aliasing'li yeniden örnekleme (soxr-VHQ'ya yakın).
+        # Varsayılan parametreler 8 kHz Nyquist üzerindeki tonları yeterince
+        # bastırmaz; Kaiser penceresi ile dar geçiş bandı sağlanır.
+        f = AF.resample(
+            w, orig_freq=src_fs, new_freq=target_fs,
+            lowpass_filter_width=64, rolloff=0.945,
+            resampling_method="sinc_interp_kaiser", beta=14.769656459379492,
+        ).numpy()
+    # float -> int16: ölçekle, yuvarla ve taşmayı önlemek için kırp.
+    i16 = np.clip(np.round(f * 32768.0), -32768, 32767).astype(np.int16)
+    return i16
+
+
+def _coreaudio_extra_settings():
+    """
+    macOS'ta PortAudio'nun cihazın global örnekleme hızını değiştirmesini
+    engelleyen ayarı döndürür (varsa). Bu, BlackHole gibi bir loopback cihaza
+    bağlanırken o cihazdan çalan sesin (ör. Zoom/YouTube) kesilmesini önler.
+    Diğer platformlarda / desteklenmiyorsa None döner.
+    """
+    settings_cls = getattr(sd, "CoreAudioSettings", None)
+    if settings_cls is None:
+        return None
+    try:
+        return settings_cls(change_device_parameters=False)
+    except Exception:
+        return None
+
+
+def record_audio(filepath, devices, target_fs=16000):
     """
     Bir veya iki giriş cihazından eşzamanlı kayıt yapar ve tek bir mono WAV'a
     birleştirir. `devices`: cihaz index'lerinin listesi (ör. [mic] veya
-    [mic, sistem_sesi]). Başarılıysa True döndürür.
+    [mic, hoparlör]). Her cihaz KENDİ doğal örnekleme hızında açılır (cihazın
+    global hızını değiştirip o cihazdan çalan sesi kesmemek için) ve yazılımda
+    `target_fs`'e (16000 Hz) yeniden örneklenir. Başarılıysa True döndürür.
     """
     if not isinstance(devices, (list, tuple)):
         devices = [devices]
     devices = [d for d in devices if d is not None]
     names = [device_name(d) for d in devices]
 
+    # Her cihazın doğal örnekleme hızını ve kanal sayısını belirle.
+    dev_rates, dev_channels = [], []
+    for dev in devices:
+        info = sd.query_devices(dev, 'input')
+        dev_rates.append(int(round(info['default_samplerate'])))
+        dev_channels.append(max(1, min(2, int(info['max_input_channels']))))
+
     clear_console()
     console.print(Panel("Ses Transkripsiyon Uygulamasına Hoşgeldiniz!", style="bold green"), justify="center")
-    console.print(f"[dim]Giriş cihaz(lar)ı: {', '.join(names)}[/dim]")
+    src_desc = ", ".join(f"{n} ({r} Hz)" for n, r in zip(names, dev_rates))
+    console.print(f"[dim]Giriş cihaz(lar)ı: {src_desc}[/dim]")
     console.print("[bold blue]Kayda başlamak için 'Enter'a basın. Kayıt sırasında durdurmak için 'q' tuşuna basın.[/bold blue]\n")
     input()  # Kullanıcı Enter'a bastığında devam eder
 
@@ -277,10 +332,16 @@ def record_audio(filepath, devices, fs=16000):
     try:
         with contextlib.ExitStack() as stack:
             for i, dev in enumerate(devices):
-                stack.enter_context(
-                    sd.InputStream(samplerate=fs, channels=1, dtype='int16',
-                                   device=dev, callback=make_callback(i))
+                # Her cihaz kendi doğal hızında ve cihaz parametrelerine
+                # dokunmadan (extra_settings) açılır.
+                kwargs = dict(
+                    samplerate=dev_rates[i], channels=dev_channels[i],
+                    dtype='int16', device=dev, callback=make_callback(i),
                 )
+                extra = _coreaudio_extra_settings()
+                if extra is not None:
+                    kwargs['extra_settings'] = extra
+                stack.enter_context(sd.InputStream(**kwargs))
             while not stop_flag[0]:
                 sd.sleep(100)
     except Exception as e:
@@ -291,11 +352,14 @@ def record_audio(filepath, devices, fs=16000):
 
     listener.join()
 
-    per_device = [
-        np.concatenate(buf, axis=0).reshape(-1) if buf else None
-        for buf in frames
+    # Her cihazın ham int16 verisini topla (çok kanallı olabilir),
+    # ardından her birini KENDİ hızından 16000 Hz mono'ya yeniden örnekle.
+    per_device = [np.concatenate(buf, axis=0) if buf else None for buf in frames]
+    resampled = [
+        resample_to_target(per_device[i], dev_rates[i], target_fs)
+        for i in range(len(devices))
     ]
-    mixed = mix_to_mono(per_device)
+    mixed = mix_to_mono(resampled)
     if mixed is None or len(mixed) == 0:
         # 'q' kayıt başlamadan (mikrofon ilk veriyi üretmeden) basılmış olabilir.
         console.print("[bold red]Hiç ses kaydedilemedi; kayıt atlanıyor.[/bold red]")
@@ -304,9 +368,9 @@ def record_audio(filepath, devices, fs=16000):
     with wave.open(str(filepath), 'wb') as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)  # 16-bit (2 byte)
-        wf.setframerate(fs)
+        wf.setframerate(target_fs)  # Whisper 16000 Hz mono bekler
         wf.writeframes(mixed.tobytes())
-    console.print(f"[green]Audio saved to {filepath} ({len(mixed)} samples, {len(devices)} kaynak)[/green]")
+    console.print(f"[green]Audio saved to {filepath} ({len(mixed)} samples @ {target_fs} Hz, {len(devices)} kaynak)[/green]")
     return True
 
 
