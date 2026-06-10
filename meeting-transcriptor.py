@@ -109,13 +109,79 @@ def select_language(cfg):
     return choice
 
 
-def record_audio(filepath, fs=16000):
+def list_input_devices():
+    """Giriş (input) yapabilen ses cihazlarının (index, name) listesini döndürür."""
+    result = []
+    for idx, dev in enumerate(sd.query_devices()):
+        if dev.get("max_input_channels", 0) > 0:
+            result.append((idx, dev["name"]))
+    return result
+
+
+def device_name(index):
+    """Cihaz index'inden ismini döndürür; bulunamazsa index'i string olarak verir."""
+    try:
+        return sd.query_devices(index)["name"]
+    except Exception:
+        return str(index)
+
+
+def select_input_device(cfg):
+    """
+    Kullanıcıya giriş cihazı seçtirir, ismini config'e kaydeder ve index'i döndürür.
+    Sanal/uygulama cihazları (BlackHole, Zoom, Teams) da listelenir; böylece
+    yönlendirilmiş (loopback) bir kaynaktan da kayıt yapılabilir.
+    """
+    devices = list_input_devices()
+    if not devices:
+        console.print("[bold red]Giriş yapabilen ses cihazı bulunamadı![/bold red]")
+        return None
+
+    console.print("[bold blue]Kullanılabilir giriş (mikrofon/ses) cihazları:[/bold blue]")
+    for n, (idx, name) in enumerate(devices):
+        console.print(f"  [cyan]{n}[/cyan]) {name}")
+
+    # Önceki seçimi varsayılan yap (varsa).
+    current_name = cfg.get("input_device")
+    default_choice = "0"
+    for n, (_, name) in enumerate(devices):
+        if name == current_name:
+            default_choice = str(n)
+            break
+
+    choice = Prompt.ask(
+        "Bir cihaz seçin (numara)",
+        choices=[str(n) for n in range(len(devices))],
+        default=default_choice,
+    )
+    idx, name = devices[int(choice)]
+    cfg["input_device"] = name
+    save_config(cfg)
+    console.print(f"[green]Seçilen giriş cihazı: {name} (index {idx})[/green]\n")
+    return idx
+
+
+def resolve_input_device(cfg):
+    """Config'teki cihazı çözer; kayıtlı cihaz yoksa/bulunamazsa seçim ister."""
+    name = cfg.get("input_device")
+    if name:
+        for idx, dev_name in list_input_devices():
+            if dev_name == name:
+                console.print(f"[blue]Giriş cihazı:[/blue] [cyan]{name}[/cyan] (index {idx})\n")
+                return idx
+        console.print(f"[yellow]Kayıtlı cihaz '{name}' bulunamadı; lütfen yeniden seçin.[/yellow]")
+    return select_input_device(cfg)
+
+
+def record_audio(filepath, device, fs=16000):
     clear_console()
     console.print(Panel("Ses Transkripsiyon Uygulamasına Hoşgeldiniz!", style="bold green"), justify="center")
+    dev_name = device_name(device)
+    console.print(f"[dim]Giriş cihazı: {dev_name}[/dim]")
     console.print("[bold blue]Kayda başlamak için 'Enter'a basın. Kayıt sırasında durdurmak için 'q' tuşuna basın.[/bold blue]\n")
     input()  # Kullanıcı Enter'a bastığında devam eder
 
-    console.print("[bold yellow]Recording... (Press 'q' to stop)[/bold yellow]")
+    console.print(f"[bold yellow]Recording from '{dev_name}'... (Press 'q' to stop)[/bold yellow]")
     audio_frames = []
     stop_flag = [False]  # Kayıt durdurulması için mutable bayrak
 
@@ -136,9 +202,15 @@ def record_audio(filepath, fs=16000):
     listener = keyboard.Listener(on_press=on_press)
     listener.start()
 
-    with sd.InputStream(samplerate=fs, channels=1, dtype='int16', callback=callback):
-        while not stop_flag[0]:
-            sd.sleep(100)
+    try:
+        with sd.InputStream(samplerate=fs, channels=1, dtype='int16', device=device, callback=callback):
+            while not stop_flag[0]:
+                sd.sleep(100)
+    except Exception as e:
+        listener.stop()
+        console.print(f"[bold red]Cihaz açılamadı ({dev_name}): {e}[/bold red]")
+        console.print("[yellow]Menüden 'd' ile farklı bir giriş cihazı seçmeyi deneyin.[/yellow]")
+        return False
 
     listener.join()
 
@@ -212,9 +284,10 @@ def main():
     clear_console()
     console.print(Panel("Ses Transkripsiyon Uygulaması", style="bold magenta"), justify="center")
 
-    # Başlangıç: proje klasörü ve dil seçimi
+    # Başlangıç: proje klasörü, dil ve giriş cihazı seçimi
     base_path = confirm_base_path(cfg)
     language = cfg.get("language") or select_language(cfg)
+    device_index = resolve_input_device(cfg)
 
     while True:
         # Her kayıt için zaman damgalı bir alt klasör (proje) oluştur.
@@ -222,7 +295,7 @@ def main():
         project_dir.mkdir(parents=True, exist_ok=True)
 
         audio_path = project_dir / "audio.wav"
-        if not record_audio(audio_path):
+        if not record_audio(audio_path, device_index):
             # Kayıt alınamadı: boş proje klasörünü temizle ve baştan başla.
             try:
                 project_dir.rmdir()
@@ -247,6 +320,7 @@ def main():
             f"[bold blue]Menü[/bold blue]  "
             f"[Enter] Yeni kayıt   "
             f"[l] Dili değiştir (mevcut: {language})   "
+            f"[d] Cihazı değiştir (mevcut: {device_name(device_index)})   "
             f"[q] Çıkış"
         )
         try:
@@ -260,6 +334,10 @@ def main():
             break
         elif choice == "l":
             language = select_language(cfg)
+        elif choice == "d":
+            new_index = select_input_device(cfg)
+            if new_index is not None:
+                device_index = new_index
         # Diğer her durumda (Enter dahil) yeni kayda devam edilir.
 
 

@@ -18,6 +18,9 @@ Bu proje, mikrofon aracılığıyla ses kaydı alıp, Hugging Face Whisper model
 - **Dil Seçimi:**  
   Transkripsiyon dilini terminalden seçersiniz: `tr` (Türkçe) veya `en` (İngilizce). Seçiminiz `config.json` dosyasında saklanır ve siz değiştirene kadar kullanılır. Menüden `l` tuşu ile dili her zaman değiştirebilirsiniz.
 
+- **Giriş Cihazı Seçimi:**  
+  Başlangıçta, giriş yapabilen ses cihazları (fiziksel mikrofonlar ve `BlackHole`, `ZoomAudioDevice`, `Microsoft Teams Audio` gibi sanal/uygulama cihazları) listelenir ve birini seçersiniz. Seçim `config.json`'a **isimle** kaydedilir (cihaz indeksi oturumlar arasında değişebildiği için), siz değiştirene kadar kullanılır. Menüden `d` tuşu ile cihazı değiştirebilirsiniz. *Not: Zoom/bilgisayar sesini kaydetmek için sesin bir loopback cihazına (ör. BlackHole veya bir Aggregate/Multi-Output cihaz) yönlendirilmesi gerekir; bu yönlendirme işletim sistemi tarafında yapılır, uygulama yalnızca cihazı seçmenizi sağlar.*
+
 - **Dile Göre Model:**  
   Her dil için en iyi sonucu veren ayrı bir model kullanılır:
   - **Türkçe:** [`selimc/whisper-large-v3-turbo-turkish`](https://huggingface.co/selimc/whisper-large-v3-turbo-turkish) (Hugging Face transformers ile çalışır; ilk kullanımda indirilir).
@@ -106,8 +109,8 @@ Terminalde scripti çalıştırdığınızda, "Ses Transkripsiyon Uygulamasına 
 ### Kayda Başlama:
 Kayıt yapmak için Enter tuşuna basın. Kayıt başladıktan sonra, kaydı durdurmak için "q" tuşuna basın.
 
-### Başlangıç (Proje Klasörü ve Dil):
-Uygulama açıldığında önce kayıtların saklanacağı proje klasörünü onaylamanız istenir (Enter ile varsayılanı kabul edebilir veya yeni bir yol girebilirsiniz). İlk çalıştırmada ayrıca transkripsiyon dilini (`tr`/`en`) seçersiniz. Bu tercihler `config.json` dosyasına kaydedilir.
+### Başlangıç (Proje Klasörü, Dil ve Cihaz):
+Uygulama açıldığında önce kayıtların saklanacağı proje klasörünü onaylamanız istenir (Enter ile varsayılanı kabul edebilir veya yeni bir yol girebilirsiniz). İlk çalıştırmada ayrıca transkripsiyon dilini (`tr`/`en`) ve giriş ses cihazını (mikrofon vb.) seçersiniz. Bu tercihler `config.json` dosyasına kaydedilir. **Önemli:** Sisteminizin varsayılan girişi `BlackHole` gibi sanal bir cihazsa ve oraya ses yönlendirilmiyorsa kayıt sessiz olur; bu yüzden gerçek mikrofonunuzu seçtiğinizden emin olun.
 
 ### Transkripsiyon:
 Kayıt durduktan sonra, ses dosyası ilgili proje alt klasörüne `audio.wav` olarak kaydedilir ve seçilen dile uygun model (Türkçe için `selimc/whisper-large-v3-turbo-turkish`, İngilizce için `ggml-distil-large-v3`) transkripsiyon yapar. Sonuç konsolda görüntülenir ve aynı klasöre `transcription.txt` olarak yazılır.
@@ -117,6 +120,7 @@ Her kayıttan sonra bir menü gösterilir:
 
 - `[Enter]` — yeni kayıt başlatır.
 - `l` — transkripsiyon dilini (`tr`/`en`) değiştirir; tercih hemen `config.json`'a kaydedilir.
+- `d` — giriş ses cihazını değiştirir; tercih hemen `config.json`'a kaydedilir.
 - `q` — uygulamadan çıkar.
 
 ### Notlar:

@@ -16,11 +16,14 @@ transcription language (Turkish or English), remembered across runs.
 A `config.json` file lives next to the script and stores:
 
 ```json
-{ "language": "tr", "base_path": "/abs/path/to/recordings" }
+{ "language": "tr", "base_path": "/abs/path/to/recordings", "input_device": "MX Brio" }
 ```
 
-- Created on first run, updated whenever the user changes language or base path.
+- Created on first run, updated whenever the user changes language, base path, or
+  input device.
 - `language` is one of `"tr"` or `"en"`.
+- `input_device` is the device **name** (not index), since indices change between
+  sessions as devices connect/disconnect.
 
 ### Startup flow
 
@@ -30,6 +33,22 @@ A `config.json` file lives next to the script and stores:
    The folder is created if it does not exist. Saved to config.
 3. **Transcription language.** On first run (no saved language), ask the user to
    pick `tr` or `en`. Otherwise use the saved language. Saved to config.
+4. **Input device.** Resolve the saved device name to a current index. If none is
+   saved or it is no longer present, list all input-capable devices (physical mics
+   plus virtual/app-audio devices like BlackHole/Zoom/Teams) and let the user
+   pick one. Saved to config by name.
+
+### Input device
+
+- `record_audio` opens `sd.InputStream(device=<index>, channels=1, ...)`; the
+  chosen device name is shown before and during recording.
+- The macOS system default input may be a virtual device (e.g. BlackHole), which
+  records silence unless audio is routed into it — the selector lets the user
+  avoid that. The app exposes virtual/loopback devices so Zoom/computer audio can
+  be captured once routed at the OS level, but it does not create that routing.
+- If the device cannot be opened (e.g. unsupported sample rate), `record_audio`
+  reports the error and returns `False` so the user can pick another via the menu.
+- Menu gains a `d` option to change the device anytime.
 
 ### Per recording
 
@@ -58,6 +77,7 @@ Each model is lazy-loaded once and cached for the session.
 
 - `[Enter]` — start a new recording
 - `l` — change language (toggle/select tr or en); updates config immediately
+- `d` — change input device; updates config immediately
 - `q` — quit
 
 ## Code structure
