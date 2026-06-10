@@ -615,13 +615,15 @@ def main():
 
         # Kullanıcıya menüyü gösteriyoruz.
         system_label = "açık" if capture_system else "kapalı"
+        # Not: köşeli parantezler rich tarafından markup sanılmasın diye '\[' ile
+        # kaçışlanır; aksi halde [l]/[d]/[s]/[q] ekranda görünmez.
         console.print(
             f"[bold blue]Menü[/bold blue]\n"
-            f"  [Enter] Yeni kayıt\n"
-            f"  [l] Dili değiştir (mevcut: {language})\n"
-            f"  [d] Mikrofonu değiştir (mevcut: {device_name(device_index)})\n"
-            f"  [s] Sistem sesi kaydı (mevcut: {system_label})\n"
-            f"  [q] Çıkış"
+            f"  \\[Enter] Yeni kayıt\n"
+            f"  \\[l] Dili değiştir (mevcut: {language})\n"
+            f"  \\[d] Mikrofonu değiştir (mevcut: {device_name(device_index)})\n"
+            f"  \\[s] Sistem sesi kaydı (mevcut: {system_label})\n"
+            f"  \\[q] Çıkış"
         )
         try:
             response = Prompt.ask("Seçiminiz", default="")
