@@ -803,6 +803,65 @@ class _TuiState:
         self.rename_buffer = ""
         self.rename_target = None               # project dir being renamed
         self.rename_return = "menu"
+        # audio playback (afplay) + delete confirmation
+        self.player_proc = None
+        self.player_rec_dir = None
+        self.player_name = ""
+        self.delete_target = None
+        self.delete_name = ""
+        self.delete_return = "menu"
+
+
+def _player_active(state):
+    return state.player_proc is not None and state.player_proc.poll() is None
+
+
+def _stop_play(state):
+    if state.player_proc is not None:
+        try:
+            if state.player_proc.poll() is None:
+                state.player_proc.terminate()
+        except Exception:
+            pass
+    state.player_proc = None
+    state.player_rec_dir = None
+
+
+def _toggle_play(state, rec):
+    """Play the recording's audio with afplay, or stop it if it's already playing."""
+    if _player_active(state) and state.player_rec_dir == rec["dir"]:
+        _stop_play(state)
+        state.status = "Playback stopped"
+        return
+    _stop_play(state)                       # stop any other playback first
+    ap = rec["dir"] / "audio.wav"
+    if not ap.exists():
+        state.status = "No audio file to play"
+        return
+    afplay = shutil.which("afplay")
+    if not afplay:
+        state.status = "afplay not found"
+        return
+    try:
+        state.player_proc = subprocess.Popen(
+            [afplay, str(ap)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        state.player_rec_dir = rec["dir"]
+        state.player_name = _rec_display_name(rec)
+        state.status = f"Playing “{state.player_name}”"
+    except Exception as e:
+        state.status = f"Play error: {e}"
+
+
+def _delete_recording(state, target):
+    if _player_active(state) and state.player_rec_dir == target:
+        _stop_play(state)
+    try:
+        shutil.rmtree(target)
+        state.status = "Recording deleted"
+    except Exception as e:
+        state.status = f"Delete error: {e}"
+    state.recordings = list_recordings(state.base_path)
+    state.menu_index = min(state.menu_index, max(0, len(_menu_items(state)) - 1))
 
 
 def _warm_model_async(state, language):
@@ -1051,26 +1110,45 @@ def _tui_body(state):
             Text(state.rename_buffer + "▏"),
         )
         return Panel(body, title="Rename recording", border_style="cyan")
+    if state.mode == "confirm_delete":
+        body = Group(
+            Text.from_markup(f"Delete [bold]“{state.delete_name or 'Untitled'}”[/bold] and its files?"),
+            Text(""),
+            Text.from_markup("[red]This cannot be undone.[/red]   Press [bold]y[/bold] to delete, any other key to cancel."),
+        )
+        return Panel(body, title="Delete recording", border_style="red")
     # default: the main menu
     return _render_menu(state)
 
 
 def _tui_footer(state):
     keymap = {
-        "menu": "↑/↓ move   Enter open/expand   →/← expand/collapse   q quit",
         "preparing": "please wait…",
         "importing": "importing… please wait",
         "recording": "[q] Stop & transcribe",
         "transcribing": "working…",
-        "viewer": "↑/↓ scroll   PgUp/PgDn page   Enter open in app   r rename   Esc back",
+        "viewer": "↑/↓ scroll   PgUp/PgDn page   Enter open in app   p play/stop   r rename   d delete   Esc back",
         "name_input": "[Enter] Start   [Esc] Cancel",
         "rename": "[Enter] Save   [Backspace] Delete   [Esc] Cancel",
+        "confirm_delete": "[y] Delete   any other key: Cancel",
         "mic_picker": "[1-9] Select   [Esc] Cancel",
         "path_edit": "[Enter] Save   [Backspace] Delete   [Esc] Cancel",
         "app_picker": "[1-9] Select   [0] Off   [Enter] First match   type to filter   [Esc] Cancel",
     }
-    keys = Text(keymap.get(state.mode, ""))          # plain Text: brackets shown literally
-    status = Text(state.status or "", style="dim")
+    if state.mode == "menu":
+        items = _menu_items(state)
+        sel = items[state.menu_index] if 0 <= state.menu_index < len(items) else None
+        if sel and sel["kind"] == "recording":
+            keystr = "↑/↓ move   Enter view   p play/stop   r rename   d delete   q quit"
+        else:
+            keystr = "↑/↓ move   Enter open/expand   →/← expand/collapse   q quit"
+    else:
+        keystr = keymap.get(state.mode, "")
+    keys = Text(keystr)                               # plain Text: brackets shown literally
+    if _player_active(state):
+        status = Text(f"▶ playing “{state.player_name}”  ·  p to stop", style="green")
+    else:
+        status = Text(state.status or "", style="dim")
     return Panel(Group(keys, status), border_style="blue")
 
 
@@ -1096,6 +1174,7 @@ def _start_recording(state, live):
         state.status = msg
         live.update(_tui_render(state))
 
+    _stop_play(state)                 # don't capture our own playback
     state.mode = "preparing"
     announce("Creating project folder…")
 
@@ -1389,8 +1468,16 @@ def _tui_handle_key(key, state, live):
             if cur["kind"] == "action" and cur["action"] == "quit":
                 return False
             _menu_activate(state, live, cur)
-        elif key in ("r", "R") and cur["kind"] == "recording":
-            _start_rename(state, cur["rec"], "menu")
+        elif cur["kind"] == "recording":
+            if key in ("r", "R"):
+                _start_rename(state, cur["rec"], "menu")
+            elif key in ("p", "P"):
+                _toggle_play(state, cur["rec"])
+            elif key in ("d", "D"):
+                state.delete_target = cur["rec"]["dir"]
+                state.delete_name = _rec_display_name(cur["rec"])
+                state.delete_return = "menu"
+                state.mode = "confirm_delete"
     elif mode == "name_input":
         if key == "ESC":
             state.mode = "menu"
@@ -1436,6 +1523,13 @@ def _tui_handle_key(key, state, live):
                     state.status = "Opened transcript"
                 except Exception as e:
                     state.status = f"Open error: {e}"
+        elif key in ("p", "P"):
+            _toggle_play(state, state.viewer_rec)
+        elif key in ("d", "D"):
+            state.delete_target = state.viewer_rec["dir"]
+            state.delete_name = _rec_display_name(state.viewer_rec)
+            state.delete_return = "menu"          # the recording is gone after delete
+            state.mode = "confirm_delete"
         elif key in ("r", "R"):
             _start_rename(state, state.viewer_rec, "viewer")
     elif mode == "rename":
@@ -1454,6 +1548,14 @@ def _tui_handle_key(key, state, live):
             state.rename_buffer = state.rename_buffer[:-1]
         elif key and len(key) == 1 and key.isprintable():
             state.rename_buffer += key
+    elif mode == "confirm_delete":
+        if key in ("y", "Y"):
+            _delete_recording(state, state.delete_target)
+            if state.viewer_rec and state.viewer_rec.get("dir") == state.delete_target:
+                state.viewer_rec = None
+            state.mode = "menu"
+        else:
+            state.mode = state.delete_return
     elif mode == "recording":
         if key in ("q", "Q", "r", "R", " "):
             _stop_and_transcribe(state, live)
@@ -1548,12 +1650,13 @@ def main():
                 running = _tui_handle_key(key, state, live)
     finally:
         # Stop any active recorders (e.g. Ctrl-C mid-recording) so the tap
-        # subprocess never lingers.
+        # subprocess never lingers, and stop any audio playback.
         for r in getattr(state, "recorders", []) or []:
             try:
                 r.stop()
             except Exception:
                 pass
+        _stop_play(state)
 
 
 def _handle_sigterm(signum, frame):

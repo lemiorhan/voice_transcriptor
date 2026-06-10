@@ -26,6 +26,9 @@ All notable changes to this project are documented here. The format is based on
 - **Recordings list**: browse all recordings (name, date, language) in the menu.
 - **In-app transcript viewer**: open a recording to read its transcript with
   scrolling (↑/↓, PgUp/PgDn, Home/End); `Enter` opens it in your external app.
+- **Per-recording actions** from the menu and viewer: **play/stop** the audio
+  (`p`, via afplay), **delete** a recording with confirmation (`d`), in addition
+  to rename (`r`) and view.
 - Full-screen terminal UI (Rich).
 - Record the **microphone and system audio together**, mixed into one 16 kHz mono
   track for transcription.

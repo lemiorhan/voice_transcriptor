@@ -97,17 +97,21 @@ Audiocript is a full-screen app you drive with the **arrow keys**.
 
 | Context | Keys |
 |---------|------|
-| **Menu** | `↑`/`↓` move · `Enter` open/expand · `→`/`←` expand/collapse · `r` rename selected recording · `q` quit |
-| **Transcript viewer** | `↑`/`↓` scroll · `PgUp`/`PgDn` page · `Enter` open in external app · `r` rename · `Esc` back |
+| **Menu** | `↑`/`↓` move · `Enter` open/expand · `→`/`←` expand/collapse · `q` quit |
+| **Menu — on a recording** | `Enter` view transcript · `p` play/stop audio · `r` rename · `d` delete |
+| **Transcript viewer** | `↑`/`↓` scroll · `PgUp`/`PgDn` page · `Enter` open in external app · `p` play/stop · `r` rename · `d` delete · `Esc` back |
 | **Text fields** (name / rename / folder / app filter) | type · `Enter` confirm · `Esc` cancel |
 | **Microphone / app pickers** | `1`–`9` select · `Esc` cancel |
+| **Delete confirmation** | `y` delete · any other key cancels |
 
 The menu groups everything:
 
 - **New recording** / **Import file** — you're asked for a name first (optional),
   then it records (or opens a file picker for `mp4`/`mov`/`wav`/`mp3`/`m4a`).
-- **Recordings** — every project (name · date · language). Select one to open the
-  in-app transcript viewer; `Enter` opens it in your external app; `r` renames it.
+- **Recordings** — every project (name · date · language). On a selected recording
+  you can **view** the transcript (`Enter`), **play/stop** its audio (`p`),
+  **rename** it (`r`), or **delete** it (`d`, with confirmation). Inside the viewer
+  the transcript scrolls and `Enter` opens it in your external app.
 - **Settings** — language (TR/EN), microphone, system-audio capture, the
   "open with" app, and the recordings folder.
 
