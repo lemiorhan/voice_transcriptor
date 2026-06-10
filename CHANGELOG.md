@@ -27,6 +27,10 @@ All notable changes to this project are documented here. The format is based on
 - **Import an existing media file** (`f`): pick an `mp4`/`mov`/`wav`/`mp3`/`m4a`
   via the native file picker; its audio is extracted with ffmpeg into a new
   project folder (`audio.wav`, 16 kHz mono) and transcribed like a recording.
+  Runs in the background with a **live progress panel** (real % for extraction
+  and for English transcription; spinner + elapsed otherwise).
+- `run.sh` now checks for the optional external tools (`ffmpeg`, `swiftc`) and
+  offers to install any that are missing (skip with `SKIP_DEP_CHECK=1`).
 - Per-language transcription models: `selimc/whisper-large-v3-turbo-turkish`
   (Turkish, Transformers) and `ggml-distil-large-v3` (English, whisper.cpp).
 - Automatic device selection for models (CUDA → Apple Silicon MPS/Metal → CPU).

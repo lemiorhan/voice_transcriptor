@@ -532,21 +532,57 @@ def _choose_media_file():
         return None
 
 
-def _extract_audio(src, dest_wav, target_fs=16000):
+def _media_duration(src):
+    """Return media duration in seconds via ffprobe, or None if unavailable."""
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    try:
+        res = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nokey=1:noprint_wrappers=1", str(src)],
+            capture_output=True, text=True,
+        )
+        return float(res.stdout.strip())
+    except Exception:
+        return None
+
+
+def _extract_audio(src, dest_wav, target_fs=16000, on_pct=None, duration=None):
     """Extract/convert `src` media to a 16 kHz mono PCM WAV at `dest_wav` using
-    ffmpeg. Returns None on success or an error string."""
+    ffmpeg. If `on_pct` and `duration` are given, report extraction progress
+    (0..1) by parsing ffmpeg's `-progress` output. Returns None on success or an
+    error string."""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         return "ffmpeg not found — install it (e.g. 'brew install ffmpeg')"
+    cmd = [ffmpeg, "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", str(target_fs),
+           "-c:a", "pcm_s16le"]
+    stream = bool(on_pct and duration)
+    if stream:
+        cmd += ["-progress", "pipe:1", "-nostats"]
+    cmd += [str(dest_wav)]
     try:
-        res = subprocess.run(
-            [ffmpeg, "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", str(target_fs),
-             "-c:a", "pcm_s16le", str(dest_wav)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
-        )
-        if res.returncode != 0:
-            tail = (res.stderr or "").strip().splitlines()
-            return f"ffmpeg failed: {tail[-1] if tail else res.returncode}"
+        if stream:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True)
+            for line in proc.stdout or []:
+                line = line.strip()
+                if line.startswith("out_time_us="):
+                    try:
+                        on_pct(min(1.0, int(line.split("=", 1)[1]) / 1e6 / duration))
+                    except Exception:
+                        pass
+                elif line == "progress=end":
+                    on_pct(1.0)
+            proc.wait()
+            rc = proc.returncode
+        else:
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.PIPE, text=True)
+            rc = res.returncode
+        if rc != 0:
+            return f"ffmpeg failed (code {rc})"
         if not Path(dest_wav).exists() or Path(dest_wav).stat().st_size == 0:
             return "ffmpeg produced no audio (no audio track?)"
         return None
@@ -602,11 +638,27 @@ def _ensure_model(language_code):
             _hf_pipe = pipeline("automatic-speech-recognition", model=TR_HF_MODEL, device=device)
 
 
-def transcribe_audio(filepath, language_code):
-    """Transcribe with the model for the selected language and return the text."""
+def transcribe_audio(filepath, language_code, on_progress=None, duration=None):
+    """
+    Transcribe with the model for the selected language and return the text.
+    If `on_progress` (a callable taking 0..1) and `duration` are given, report
+    progress: for English (whisper.cpp) via each segment's end time / duration.
+    The Turkish (transformers) path has no incremental hook, so it stays
+    indeterminate.
+    """
     _ensure_model(language_code)
     if language_code == "en":
-        segments = _cpp_model.transcribe(str(filepath), language="en")
+        cb = None
+        if on_progress and duration:
+            def cb(seg):
+                t1 = getattr(seg, "t1", None)            # centiseconds (10 ms units)
+                if t1 is not None:
+                    try:
+                        on_progress(min(1.0, (t1 / 100.0) / duration))
+                    except Exception:
+                        pass
+        segments = _cpp_model.transcribe(str(filepath), language="en",
+                                         new_segment_callback=cb)
         return "".join(segment.text for segment in segments).strip()
     result = _hf_pipe(
         str(filepath),
@@ -659,6 +711,11 @@ class _TuiState:
             self.open_app = "Sublime Text" if "Sublime Text" in list_installed_apps() else None
         # background model pre-warming: lang -> "loading" | "ready" | "error: …"
         self.model_state = {}
+        # background file-import job progress
+        self.import_src = ""
+        self.import_phase = ""        # "extract" | "transcribe"
+        self.import_pct = None        # 0..1, or None for indeterminate
+        self.import_phase_start = 0.0
         try:
             self.base_path.mkdir(parents=True, exist_ok=True)
         except Exception:
@@ -696,6 +753,42 @@ def _meters_markup(recorders):
     return "\n".join(rows) if rows else "[dim](no sources)[/dim]"
 
 
+_SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def _spinner(elapsed):
+    return _SPIN[int(elapsed * 10) % len(_SPIN)]
+
+
+def _progress_bar(pct, width=30):
+    pct = max(0.0, min(1.0, pct))
+    filled = int(round(pct * width))
+    return f"[cyan]{'█' * filled}[/cyan][dim]{'░' * (width - filled)}[/dim]"
+
+
+def _import_panel(state):
+    """Two-phase import progress: extract (real %), then transcribe (real % for
+    English, spinner+elapsed otherwise)."""
+    lines = [f"[bold]Importing[/bold] {state.import_src}", ""]
+    elapsed = time.monotonic() - state.import_phase_start if state.import_phase_start else 0.0
+
+    if state.import_phase == "extract":
+        if state.import_pct is None:
+            lines.append(f"  Step 1/2  Extract audio   {_spinner(elapsed)}  {elapsed:4.0f}s")
+        else:
+            lines.append(f"  Step 1/2  Extract audio   {_progress_bar(state.import_pct)} {int(state.import_pct * 100):3d}%")
+        lines.append("  [dim]Step 2/2  Transcribe[/dim]")
+    elif state.import_phase == "transcribe":
+        lines.append("  [green]Step 1/2  Extract audio   ✓ done[/green]")
+        if state.import_pct is None:
+            lines.append(f"  Step 2/2  Transcribe     {_spinner(elapsed)}  {elapsed:4.0f}s  [dim](model loads on first use)[/dim]")
+        else:
+            lines.append(f"  Step 2/2  Transcribe     {_progress_bar(state.import_pct)} {int(state.import_pct * 100):3d}%  {elapsed:4.0f}s")
+    else:
+        lines.append(f"  Preparing…  {_spinner(elapsed)}")
+    return Panel(Text.from_markup("\n".join(lines)), title="Import", border_style="yellow")
+
+
 def _model_label(state):
     ms = state.model_state.get(state.language)
     if ms == "ready":
@@ -722,6 +815,8 @@ def _tui_header(state):
 
 
 def _tui_body(state):
+    if state.mode == "importing":
+        return _import_panel(state)
     if state.mode == "recording":
         elapsed = time.monotonic() - state.rec_start
         mm, ss = divmod(int(elapsed), 60)
@@ -778,6 +873,7 @@ def _tui_footer(state):
     keymap = {
         "home": "[r] Record  [f] Import file  [l] Language  [d] Microphone  [s] System audio  [o] Open-with  [p] Folder  [q] Quit",
         "preparing": "please wait…",
+        "importing": "importing… please wait",
         "recording": "[q] Stop & transcribe",
         "transcribing": "working…",
         "mic_picker": "[1-9] Select   [Esc] Cancel",
@@ -894,10 +990,27 @@ def _stop_and_transcribe(state, live):
     _transcribe_and_save(state, live, state.project_dir, audio_path)
 
 
+def _save_and_open(state, project_dir, text):
+    """Write transcription.txt, update last-transcript/status, and open the
+    transcript in the chosen app. Sets state.status; does not change state.mode."""
+    transcript_path = project_dir / "transcription.txt"
+    try:
+        with open(transcript_path, "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+    except Exception as e:
+        state.status = f"Save error: {e}"
+        return
+    state.last_transcript = text
+    state.last_project = project_dir
+    state.status = f"Saved to {project_dir.name}"
+    if state.open_app:
+        err = _open_in_app(state.open_app, transcript_path)
+        state.status = (f"Saved — could not open in {state.open_app}"
+                        if err else f"Saved & opened in {state.open_app}")
+
+
 def _transcribe_and_save(state, live, project_dir, audio_path):
-    """Transcribe `audio_path` (in `project_dir`), save transcription.txt, update
-    the UI, and open the transcript in the chosen app. Shared by recording and
-    file-import flows."""
+    """Transcribe `audio_path` (recording flow, main thread), save, and open."""
     state.mode = "transcribing"
     state.status = "Transcribing…"
     live.update(_tui_render(state))
@@ -907,27 +1020,55 @@ def _transcribe_and_save(state, live, project_dir, audio_path):
         state.status = f"Transcription error: {e}"
         state.mode = "home"
         return
-    transcript_path = project_dir / "transcription.txt"
-    try:
-        with open(transcript_path, "w", encoding="utf-8") as f:
-            f.write(text + "\n")
-    except Exception as e:
-        state.status = f"Save error: {e}"
+    _save_and_open(state, project_dir, text)
+    state.mode = "home"
+
+
+def _import_worker(state, src, project_dir):
+    """Background worker: extract audio (with progress), then transcribe (with
+    progress), then save+open. Updates state.import_* for the UI to render."""
+    audio_path = project_dir / "audio.wav"
+    # Phase 1: extract audio (real % from ffmpeg when duration is known).
+    dur = _media_duration(src)
+    state.import_phase = "extract"
+    state.import_pct = 0.0 if dur else None
+    state.import_phase_start = time.monotonic()
+    err = _extract_audio(
+        src, audio_path, duration=dur,
+        on_pct=(lambda p: setattr(state, "import_pct", p)) if dur else None,
+    )
+    if err:
+        state.status = f"Import failed: {err}"
+        try:
+            project_dir.rmdir()
+        except Exception:
+            pass
         state.mode = "home"
         return
-    state.last_transcript = text
-    state.last_project = project_dir
-    state.status = f"Saved to {project_dir.name}"
-    if state.open_app:
-        err = _open_in_app(state.open_app, transcript_path)
-        state.status = (f"Saved — could not open in {state.open_app}"
-                        if err else f"Saved & opened in {state.open_app}")
+
+    # Phase 2: transcribe (real % for English via segments; indeterminate for tr).
+    tdur = _media_duration(audio_path) or dur
+    state.import_phase = "transcribe"
+    state.import_pct = 0.0 if (state.language == "en" and tdur) else None
+    state.import_phase_start = time.monotonic()
+    try:
+        text = transcribe_audio(
+            audio_path, state.language,
+            on_progress=(lambda p: setattr(state, "import_pct", p)),
+            duration=tdur,
+        )
+    except Exception as e:
+        state.status = f"Transcription error: {e}"
+        state.mode = "home"
+        return
+
+    _save_and_open(state, project_dir, text)
     state.mode = "home"
 
 
 def _import_file(state, live):
-    """Let the user pick an external media file, extract its audio into a new
-    project folder, and transcribe it like a recording."""
+    """Pick an external media file (native dialog), then run extraction +
+    transcription in a background worker so the UI can show live progress."""
     state.mode = "preparing"
     state.status = "Opening file picker…"
     live.update(_tui_render(state))
@@ -951,20 +1092,13 @@ def _import_file(state, live):
         state.mode = "home"
         return
 
-    state.status = f"Extracting audio from {os.path.basename(src)}…"
-    live.update(_tui_render(state))
-    audio_path = project_dir / "audio.wav"
-    err = _extract_audio(src, audio_path)
-    if err:
-        state.status = f"Import failed: {err}"
-        try:
-            project_dir.rmdir()
-        except Exception:
-            pass
-        state.mode = "home"
-        return
-
-    _transcribe_and_save(state, live, project_dir, audio_path)
+    state.import_src = os.path.basename(src)
+    state.import_phase = ""
+    state.import_pct = None
+    state.status = "Importing…"
+    state.mode = "importing"
+    threading.Thread(target=_import_worker, args=(state, src, project_dir),
+                     daemon=True).start()
 
 
 def _tui_handle_key(key, state, live):

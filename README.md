@@ -125,7 +125,10 @@ Press `f` to transcribe a file you already have. A native file picker opens; cho
 an `mp4`, `mov`, `wav`, `mp3` or `m4a` file. Its audio is extracted (via ffmpeg)
 into a **new project folder** as `audio.wav` (16 kHz mono) and transcribed using
 the current language — identical to a recording, including the saved
-`transcription.txt` and auto-open.
+`transcription.txt` and auto-open. A **live progress panel** shows the current
+phase and how much is left: a real percentage bar for the audio extraction, then
+the transcription progress (a real percentage for English, an elapsed timer for
+Turkish).
 
 ### Open the transcript in an app
 
